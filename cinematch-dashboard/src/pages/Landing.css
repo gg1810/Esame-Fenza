@@ -1,0 +1,218 @@
+.landing-page {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    background: #141414;
+}
+
+.landing-background {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+}
+
+.bg-gradient {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center top, rgba(229, 9, 20, 0.15) 0%, transparent 50%),
+        radial-gradient(ellipse at left bottom, rgba(229, 9, 20, 0.1) 0%, transparent 40%);
+}
+
+.bg-pattern {
+    position: absolute;
+    inset: 0;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+
+.landing-content {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 40px;
+    max-width: 700px;
+    width: 100%;
+}
+
+.landing-header {
+    margin-bottom: 48px;
+}
+
+.landing-header .logo-icon {
+    font-size: 4rem;
+    display: block;
+    margin-bottom: 16px;
+    animation: pulse 2s infinite;
+}
+
+.logo-title {
+    font-size: 3.5rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #ffffff 0%, #E50914 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 12px;
+}
+
+.logo-tagline {
+    font-size: 1.2rem;
+    color: #b3b3b3;
+}
+
+.upload-zone {
+    background: rgba(35, 35, 35, 0.8);
+    border: 3px dashed #E50914;
+    border-radius: 20px;
+    padding: 60px 40px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(10px);
+}
+
+.upload-zone:hover {
+    background: rgba(229, 9, 20, 0.1);
+    border-color: #ff1a2d;
+    box-shadow: 0 0 40px rgba(229, 9, 20, 0.3);
+    transform: scale(1.02);
+}
+
+.upload-zone.dragging {
+    background: rgba(229, 9, 20, 0.2);
+    border-color: #ff1a2d;
+    box-shadow: 0 0 60px rgba(229, 9, 20, 0.5);
+    transform: scale(1.05);
+}
+
+.upload-zone.uploaded {
+    border-style: solid;
+    border-color: #46d369;
+    background: rgba(70, 211, 105, 0.1);
+}
+
+.upload-icon {
+    color: #E50914;
+    margin-bottom: 20px;
+}
+
+.upload-icon svg {
+    animation: bounce 2s infinite;
+}
+
+@keyframes bounce {
+
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-10px);
+    }
+}
+
+.upload-text {
+    font-size: 1.4rem;
+    color: #ffffff;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.upload-subtext {
+    font-size: 1rem;
+    color: #757575;
+    margin-bottom: 16px;
+}
+
+.upload-format {
+    display: inline-block;
+    padding: 6px 16px;
+    background: rgba(229, 9, 20, 0.2);
+    border-radius: 20px;
+    font-size: 0.85rem;
+    color: #E50914;
+}
+
+.upload-success {
+    margin-bottom: 16px;
+}
+
+.success-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 64px;
+    height: 64px;
+    background: #46d369;
+    border-radius: 50%;
+    font-size: 2rem;
+    color: white;
+    animation: scaleIn 0.3s ease;
+}
+
+@keyframes scaleIn {
+    from {
+        transform: scale(0);
+    }
+
+    to {
+        transform: scale(1);
+    }
+}
+
+.upload-filename {
+    font-size: 1.2rem;
+    color: #ffffff;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.upload-loading {
+    color: #46d369;
+    animation: pulse 1s infinite;
+}
+
+.landing-features {
+    display: flex;
+    justify-content: center;
+    gap: 32px;
+    margin-top: 48px;
+    flex-wrap: wrap;
+}
+
+.feature {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 30px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.feature-icon {
+    font-size: 1.3rem;
+}
+
+.feature-text {
+    font-size: 0.9rem;
+    color: #b3b3b3;
+    font-weight: 500;
+}
+
+@media (max-width: 600px) {
+    .logo-title {
+        font-size: 2.5rem;
+    }
+
+    .upload-zone {
+        padding: 40px 24px;
+    }
+
+    .landing-features {
+        gap: 16px;
+    }
+}

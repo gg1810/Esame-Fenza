@@ -1,0 +1,243 @@
+.cinema-page {
+    animation: fadeIn 0.5s ease;
+}
+
+.cinema-layout {
+    display: grid;
+    grid-template-columns: 1fr 350px;
+    gap: 32px;
+}
+
+@media (max-width: 1024px) {
+    .cinema-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+.featured-movie {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    gap: 32px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-lg);
+    padding: 24px;
+}
+
+@media (max-width: 768px) {
+    .featured-movie {
+        grid-template-columns: 1fr;
+    }
+}
+
+.featured-poster {
+    position: relative;
+    border-radius: var(--border-radius-md);
+    overflow: hidden;
+}
+
+.featured-poster img {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.poster-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 16px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+}
+
+.rating-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    background: var(--accent-secondary);
+    border-radius: 20px;
+    font-weight: 700;
+    color: #000;
+}
+
+.featured-info {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.theater-badge {
+    display: inline-block;
+    padding: 6px 14px;
+    background: var(--accent-primary);
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: white;
+    width: fit-content;
+}
+
+.featured-info h2 {
+    font-size: 2rem;
+    line-height: 1.2;
+}
+
+.movie-meta {
+    color: var(--text-secondary);
+    font-size: 1rem;
+}
+
+.genres-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.genres-row .genre-tag {
+    padding: 6px 14px;
+    background: var(--glass-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    font-size: 0.85rem;
+}
+
+.showtimes-section,
+.sentiment-section {
+    padding: 16px 0;
+    border-top: 1px solid var(--border-color);
+}
+
+.showtimes-section h4,
+.sentiment-section h4 {
+    margin-bottom: 12px;
+    font-size: 1rem;
+    color: var(--text-secondary);
+}
+
+.showtimes-grid {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.showtime-btn {
+    padding: 10px 20px;
+    background: var(--bg-secondary);
+    border: 2px solid var(--accent-secondary);
+    border-radius: var(--border-radius-sm);
+    color: var(--accent-secondary);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.showtime-btn:hover {
+    background: var(--accent-secondary);
+    color: #000;
+}
+
+.sentiment-note {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 12px;
+    text-align: center;
+}
+
+.book-btn {
+    padding: 14px 28px;
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    border: none;
+    border-radius: var(--border-radius-sm);
+    color: white;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    margin-top: auto;
+}
+
+.book-btn:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 10px 30px var(--accent-glow);
+}
+
+.other-movies {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-lg);
+    padding: 20px;
+}
+
+.other-movies h3 {
+    margin-bottom: 16px;
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+}
+
+.movie-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.movie-list-item {
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border: 2px solid transparent;
+    border-radius: var(--border-radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.movie-list-item:hover {
+    border-color: var(--accent-primary);
+}
+
+.movie-list-item.active {
+    border-color: var(--accent-secondary);
+    background: rgba(197, 165, 114, 0.1);
+}
+
+.list-poster {
+    width: 60px;
+    height: 90px;
+    object-fit: cover;
+    border-radius: 6px;
+}
+
+.list-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.list-info h4 {
+    font-size: 0.95rem;
+    margin-bottom: 4px;
+}
+
+.list-info p {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.list-meta {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+    font-size: 0.8rem;
+}
+
+.list-meta .rating {
+    color: var(--accent-secondary);
+    font-weight: 600;
+}
+
+.sentiment-mini {
+    color: var(--text-secondary);
+}

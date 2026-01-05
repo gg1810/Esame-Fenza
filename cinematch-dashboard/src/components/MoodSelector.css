@@ -1,0 +1,69 @@
+.mood-selector {
+    margin-bottom: 40px;
+}
+
+.mood-selector-title {
+    text-align: center;
+    margin-bottom: 24px;
+    font-size: 1.5rem;
+    color: var(--text-primary);
+}
+
+.mood-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 16px;
+}
+
+@media (max-width: 1024px) {
+    .mood-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (max-width: 600px) {
+    .mood-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.mood-button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 24px 16px;
+    background: var(--bg-card);
+    border: 2px solid var(--border-color);
+    border-radius: var(--border-radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.mood-button:hover {
+    border-color: var(--mood-color);
+    box-shadow: 0 0 25px color-mix(in srgb, var(--mood-color) 40%, transparent);
+    transform: translateY(-4px) scale(1.05);
+}
+
+.mood-button.selected {
+    border-color: var(--mood-color);
+    background: color-mix(in srgb, var(--mood-color) 15%, var(--bg-card));
+    box-shadow: 0 0 30px color-mix(in srgb, var(--mood-color) 50%, transparent);
+}
+
+.mood-emoji {
+    font-size: 3rem;
+    transition: transform var(--transition-fast);
+}
+
+.mood-button:hover .mood-emoji,
+.mood-button.selected .mood-emoji {
+    transform: scale(1.2);
+}
+
+.mood-label {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}

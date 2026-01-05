@@ -1,0 +1,117 @@
+.sentiment-gauge {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.gauge-label {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.gauge-container {
+    position: relative;
+}
+
+.gauge-background {
+    width: 200px;
+    height: 100px;
+    background: linear-gradient(to right, #ef4444, #f59e0b, #22c55e);
+    border-radius: 200px 200px 0 0;
+    position: relative;
+    overflow: hidden;
+}
+
+.gauge-fill {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 8px;
+    height: 90px;
+    background: var(--text-primary);
+    transform-origin: bottom center;
+    transform: translateX(-50%) rotate(var(--rotation));
+    border-radius: 4px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+    transition: transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.gauge-center {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 80px;
+    height: 40px;
+    background: var(--bg-card);
+    border-radius: 80px 80px 0 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.gauge-emoji {
+    font-size: 1.5rem;
+    margin-top: 8px;
+}
+
+.gauge-score {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.gauge-labels {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    margin-top: 8px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.sentiment-text {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--accent-primary);
+}
+
+/* Sizes */
+.gauge-small .gauge-background {
+    width: 120px;
+    height: 60px;
+}
+
+.gauge-small .gauge-fill {
+    height: 50px;
+}
+
+.gauge-small .gauge-center {
+    width: 50px;
+    height: 25px;
+}
+
+.gauge-small .gauge-emoji {
+    font-size: 1rem;
+}
+
+.gauge-large .gauge-background {
+    width: 280px;
+    height: 140px;
+}
+
+.gauge-large .gauge-fill {
+    height: 130px;
+}
+
+.gauge-large .gauge-center {
+    width: 100px;
+    height: 50px;
+}
+
+.gauge-large .gauge-emoji {
+    font-size: 2rem;
+}

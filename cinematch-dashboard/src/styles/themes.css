@@ -1,0 +1,127 @@
+/* ============================================
+   CINEMATCH - THEME SYSTEM
+   Studio-inspired color themes
+   ============================================ */
+
+:root {
+  /* Base tokens */
+  --font-primary: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --border-radius-sm: 8px;
+  --border-radius-md: 12px;
+  --border-radius-lg: 16px;
+  --transition-fast: 0.2s ease;
+  --transition-medium: 0.3s ease;
+  
+  /* Glassmorphism */
+  --glass-bg: rgba(255, 255, 255, 0.05);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-blur: blur(10px);
+}
+
+/* ============================================
+   NETFLIX THEME - Landing & Dashboard
+   ============================================ */
+[data-theme="netflix"] {
+  --bg-primary: #141414;
+  --bg-secondary: #1f1f1f;
+  --bg-card: #232323;
+  --accent-primary: #E50914;
+  --accent-secondary: #b20710;
+  --accent-glow: rgba(229, 9, 20, 0.3);
+  --text-primary: #ffffff;
+  --text-secondary: #b3b3b3;
+  --text-muted: #757575;
+  --border-color: #333333;
+  --success: #46d369;
+  --warning: #f5c518;
+}
+
+/* ============================================
+   A24 THEME - Recommendations
+   ============================================ */
+[data-theme="a24"] {
+  --bg-primary: #1a1a1a;
+  --bg-secondary: #242424;
+  --bg-card: #2a2a2a;
+  --accent-primary: #8B9A7D;
+  --accent-secondary: #6b7a5d;
+  --accent-glow: rgba(139, 154, 125, 0.3);
+  --text-primary: #F5F5DC;
+  --text-secondary: #c9c9b3;
+  --text-muted: #8a8a7a;
+  --border-color: #3a3a3a;
+  --success: #8B9A7D;
+  --warning: #d4a574;
+}
+
+/* ============================================
+   WARNER BROS THEME - Cinema
+   ============================================ */
+[data-theme="warner"] {
+  --bg-primary: #0a1628;
+  --bg-secondary: #0f1f35;
+  --bg-card: #152742;
+  --accent-primary: #004B87;
+  --accent-secondary: #C5A572;
+  --accent-glow: rgba(0, 75, 135, 0.4);
+  --text-primary: #ffffff;
+  --text-secondary: #a8c0d8;
+  --text-muted: #6b8299;
+  --border-color: #1e3a5f;
+  --success: #4ade80;
+  --warning: #C5A572;
+}
+
+/* ============================================
+   PARAMOUNT THEME - Sentiment
+   ============================================ */
+[data-theme="paramount"] {
+  --bg-primary: #121212;
+  --bg-secondary: #1a1a1a;
+  --bg-card: #222222;
+  --accent-primary: #0033A0;
+  --accent-secondary: #C0C0C0;
+  --accent-glow: rgba(0, 51, 160, 0.4);
+  --text-primary: #ffffff;
+  --text-secondary: #C0C0C0;
+  --text-muted: #808080;
+  --border-color: #333333;
+  --success: #00c853;
+  --warning: #ffab00;
+}
+
+/* ============================================
+   LIONSGATE THEME - Mood
+   ============================================ */
+[data-theme="lionsgate"] {
+  --bg-primary: #1C1410;
+  --bg-secondary: #2a1f18;
+  --bg-card: #352820;
+  --accent-primary: #FF6B35;
+  --accent-secondary: #FFB347;
+  --accent-glow: rgba(255, 107, 53, 0.4);
+  --text-primary: #fff8f0;
+  --text-secondary: #d4c4b0;
+  --text-muted: #9a8a76;
+  --border-color: #4a3a2a;
+  --success: #7ed321;
+  --warning: #FFB347;
+}
+
+/* ============================================
+   UNIVERSAL THEME - Predictions
+   ============================================ */
+[data-theme="universal"] {
+  --bg-primary: #0D0D1A;
+  --bg-secondary: #151528;
+  --bg-card: #1d1d36;
+  --accent-primary: #00529B;
+  --accent-secondary: #A7A9AC;
+  --accent-glow: rgba(0, 82, 155, 0.4);
+  --text-primary: #ffffff;
+  --text-secondary: #A7A9AC;
+  --text-muted: #6a6b6e;
+  --border-color: #2a2a4a;
+  --success: #00e676;
+  --warning: #ffc400;
+}
