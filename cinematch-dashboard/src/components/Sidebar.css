@@ -90,12 +90,16 @@
 .sidebar-footer {
     padding: 20px 24px;
     border-top: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
 }
 
 .user-info {
     display: flex;
     align-items: center;
     gap: 12px;
+    flex: 1;
 }
 
 .user-avatar {
@@ -123,7 +127,23 @@
 
 .user-films {
     font-size: 0.8rem;
-    color: var(--text-muted);
+    color: var(--accent-primary);
+}
+
+.logout-btn {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    font-size: 1.1rem;
+    transition: all var(--transition-fast);
+}
+
+.logout-btn:hover {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    transform: scale(1.05);
 }
 
 @media (max-width: 768px) {

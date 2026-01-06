@@ -203,8 +203,17 @@ def calculate_stats(df: pd.DataFrame, movies: list) -> dict:
         "total_2_stars": int(df[df['Rating'] == 2].shape[0]),
         "total_1_stars": int(df[df['Rating'] == 1].shape[0]),
         "watch_time_hours": len(movies) * 2,
-        "updated_at": datetime.utcnow().isoformat()
+        "updated_at": datetime.utcnow().isoformat(),
+        "top_years": calculate_top_years(movies)
     }
+
+def calculate_top_years(movies: list) -> list:
+    """Calcola i 5 anni con più film visti."""
+    from collections import Counter
+    years = [m['year'] for m in movies if m.get('year')]
+    year_counts = Counter(years)
+    top_5 = year_counts.most_common(5)
+    return [{"year": year, "count": count} for year, count in top_5]
 
 # ============================================
 # AUTH ENDPOINTS
@@ -366,7 +375,67 @@ async def get_user_stats(current_user_id: str = Depends(get_current_user_id)):
     if not stats:
         raise HTTPException(status_code=404, detail="Nessun dato trovato. Carica prima un file CSV.")
     
+    # Se top_years non è presente, calcolalo al volo
+    if "top_years" not in stats:
+        movies = list(movies_collection.find({"user_id": current_user_id}))
+        stats["top_years"] = calculate_top_years(movies)
+    
     return stats
+
+@app.get("/movies")
+async def get_movies(current_user_id: str = Depends(get_current_user_id)):
+    """Ottiene tutti i film dell'utente (per pagina Film Visti)."""
+    movies = list(movies_collection.find(
+        {"user_id": current_user_id},
+        {"_id": 0, "user_id": 0}
+    ))
+    return movies
+
+@app.get("/monthly-stats/{year}")
+async def get_monthly_stats(year: int, current_user_id: str = Depends(get_current_user_id)):
+    """Ottiene le statistiche mensili per un anno specifico (basato sulla data di visione)."""
+    movies = list(movies_collection.find(
+        {"user_id": current_user_id},
+        {"_id": 0, "user_id": 0}
+    ))
+    
+    months = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
+    monthly_counts = {i: 0 for i in range(1, 13)}
+    films_in_year = 0
+    
+    for movie in movies:
+        if movie.get('date'):
+            try:
+                # Parsing data nel formato YYYY-MM-DD
+                date_str = str(movie['date'])
+                movie_year = int(date_str.split('-')[0])
+                movie_month = int(date_str.split('-')[1])
+                
+                if movie_year == year:
+                    monthly_counts[movie_month] += 1
+                    films_in_year += 1
+            except (ValueError, IndexError):
+                continue
+    
+    monthly_data = [{"month": months[i], "films": monthly_counts[i+1]} for i in range(12)]
+    
+    # Trova gli anni disponibili (in cui l'utente ha visto film)
+    available_years = set()
+    for movie in movies:
+        if movie.get('date'):
+            try:
+                date_str = str(movie['date'])
+                movie_year = int(date_str.split('-')[0])
+                available_years.add(movie_year)
+            except (ValueError, IndexError):
+                continue
+    
+    return {
+        "year": year,
+        "monthly_data": monthly_data,
+        "total_films": films_in_year,
+        "available_years": sorted(list(available_years), reverse=True)
+    }
 
 @app.get("/user-movies")
 async def get_user_movies(

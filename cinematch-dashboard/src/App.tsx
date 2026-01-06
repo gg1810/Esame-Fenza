@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './pages/Dashboard';
+import { FilmVisti } from './pages/FilmVisti';
 import { Recommendations } from './pages/Recommendations';
 import { Cinema } from './pages/Cinema';
 import { Sentiment } from './pages/Sentiment';
@@ -14,6 +15,7 @@ import './styles/global.css';
 const routeThemes: Record<string, string> = {
   '/': 'netflix',
   '/dashboard': 'netflix',
+  '/film-visti': 'fox',
   '/recommendations': 'a24',
   '/cinema': 'warner',
   '/sentiment': 'paramount',
@@ -55,6 +57,7 @@ function App() {
                     <Routes>
                       <Route path="/" element={<Navigate to="/dashboard" replace />} />
                       <Route path="/dashboard" element={<Dashboard />} />
+                      <Route path="/film-visti" element={<FilmVisti />} />
                       <Route path="/recommendations" element={<Recommendations />} />
                       <Route path="/cinema" element={<Cinema />} />
                       <Route path="/sentiment" element={<Sentiment />} />

@@ -125,3 +125,21 @@
   --success: #00e676;
   --warning: #ffc400;
 }
+
+/* ============================================
+   20TH CENTURY FOX THEME - Film Visti
+   ============================================ */
+[data-theme="fox"] {
+  --bg-primary: #0a1929;
+  --bg-secondary: #0f2744;
+  --bg-card: #132f4c;
+  --accent-primary: #FFD700;
+  --accent-secondary: #1976D2;
+  --accent-glow: rgba(255, 215, 0, 0.3);
+  --text-primary: #ffffff;
+  --text-secondary: #b0c4de;
+  --text-muted: #7b9ab8;
+  --border-color: #1e4976;
+  --success: #4caf50;
+  --warning: #FFD700;
+}

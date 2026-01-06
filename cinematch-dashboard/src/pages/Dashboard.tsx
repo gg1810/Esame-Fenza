@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar } from 'recharts';
 import { StatsCard } from '../components/StatsCard';
 import './Dashboard.css';
 
@@ -9,6 +9,14 @@ interface DashboardData {
     favorite_genre: string;
     monthly_data: any[];
     genre_data: any[];
+    top_years?: { year: number; count: number }[];
+}
+
+interface MonthlyStats {
+    year: number;
+    monthly_data: any[];
+    total_films: number;
+    available_years: number[];
 }
 
 export function Dashboard() {
@@ -17,6 +25,8 @@ export function Dashboard() {
     const [noData, setNoData] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+    const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+    const [monthlyStats, setMonthlyStats] = useState<MonthlyStats | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const fetchStats = () => {
@@ -47,9 +57,29 @@ export function Dashboard() {
             });
     };
 
+    const fetchMonthlyStats = (year: number) => {
+        fetch(`http://localhost:8000/monthly-stats/${year}`, {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        })
+            .then(res => res.json())
+            .then(stats => {
+                if (stats && !stats.detail) {
+                    setMonthlyStats(stats);
+                }
+            })
+            .catch(err => console.error('Errore caricamento stats mensili:', err));
+    };
+
     useEffect(() => {
         fetchStats();
+        fetchMonthlyStats(selectedYear);
     }, []);
+
+    useEffect(() => {
+        fetchMonthlyStats(selectedYear);
+    }, [selectedYear]);
 
     const handleFileUpload = async (file: File) => {
         if (!file.name.endsWith('.csv')) {
@@ -164,8 +194,33 @@ export function Dashboard() {
         avg_rating: 0,
         favorite_genre: 'Nessuno',
         monthly_data: [],
-        genre_data: []
+        genre_data: [],
+        top_years: []
     };
+
+    // Colori per le barre del grafico anni
+    const yearColors = ['#E50914', '#FF6B35', '#00529B', '#8B5CF6', '#06B6D4'];
+
+    // Anno corrente come limite massimo
+    const currentYear = new Date().getFullYear();
+    const minYear = 2015; // Anno minimo
+
+    // Funzioni per navigare tra gli anni
+    const goToPreviousYear = () => {
+        if (selectedYear > minYear) {
+            setSelectedYear(selectedYear - 1);
+        }
+    };
+
+    const goToNextYear = () => {
+        if (selectedYear < currentYear) {
+            setSelectedYear(selectedYear + 1);
+        }
+    };
+
+    // Dati mensili per l'anno selezionato
+    const monthlyDataForYear = monthlyStats?.monthly_data || displayData.monthly_data;
+    const filmsInSelectedYear = monthlyStats?.total_films || 0;
 
     return (
         <div className="dashboard-page">
@@ -205,9 +260,28 @@ export function Dashboard() {
 
             <div className="charts-section">
                 <div className="chart-container">
-                    <h3>📈 Film Visti per Mese</h3>
+                    <div className="chart-header">
+                        <h3>📈 Film Visti nel {selectedYear} <span className="year-count-badge">{filmsInSelectedYear} film</span></h3>
+                        <div className="year-selector">
+                            <button
+                                className="year-nav-btn"
+                                onClick={goToPreviousYear}
+                                disabled={selectedYear <= minYear}
+                            >
+                                ◀
+                            </button>
+                            <span className="year-display">{selectedYear}</span>
+                            <button
+                                className="year-nav-btn"
+                                onClick={goToNextYear}
+                                disabled={selectedYear >= currentYear}
+                            >
+                                ▶
+                            </button>
+                        </div>
+                    </div>
                     <ResponsiveContainer width="100%" height={300}>
-                        <AreaChart data={displayData.monthly_data}>
+                        <AreaChart data={monthlyDataForYear}>
                             <defs>
                                 <linearGradient id="colorFilms" x1="0" y1="0" x2="0" y2="1">
                                     <stop offset="5%" stopColor="#E50914" stopOpacity={0.8} />
@@ -219,9 +293,22 @@ export function Dashboard() {
                             <YAxis stroke="#757575" />
                             <Tooltip
                                 contentStyle={{
-                                    background: '#232323',
-                                    border: '1px solid #333',
-                                    borderRadius: '8px'
+                                    background: '#1a1a1a',
+                                    border: '2px solid #E50914',
+                                    borderRadius: '8px',
+                                    padding: '12px 16px',
+                                    boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
+                                }}
+                                itemStyle={{
+                                    color: '#ffffff',
+                                    fontSize: '14px',
+                                    fontWeight: '600'
+                                }}
+                                labelStyle={{
+                                    color: '#E50914',
+                                    fontSize: '14px',
+                                    fontWeight: '700',
+                                    marginBottom: '4px'
                                 }}
                             />
                             <Area
@@ -247,6 +334,8 @@ export function Dashboard() {
                                 outerRadius={100}
                                 paddingAngle={5}
                                 dataKey="value"
+                                nameKey="name"
+                                label={false}
                             >
                                 {displayData.genre_data.map((entry: any, index: number) => (
                                     <Cell key={`cell-${index}`} fill={entry.color} />
@@ -254,10 +343,24 @@ export function Dashboard() {
                             </Pie>
                             <Tooltip
                                 contentStyle={{
-                                    background: '#232323',
-                                    border: '1px solid #333',
-                                    borderRadius: '8px'
+                                    background: '#1a1a1a',
+                                    border: '2px solid #E50914',
+                                    borderRadius: '8px',
+                                    padding: '12px 16px',
+                                    boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
                                 }}
+                                itemStyle={{
+                                    color: '#ffffff',
+                                    fontSize: '14px',
+                                    fontWeight: '600'
+                                }}
+                                labelStyle={{
+                                    color: '#E50914',
+                                    fontSize: '14px',
+                                    fontWeight: '700',
+                                    marginBottom: '4px'
+                                }}
+                                formatter={(value: number, name: string) => [`${value}%`, name]}
                             />
                         </PieChart>
                     </ResponsiveContainer>
@@ -270,6 +373,64 @@ export function Dashboard() {
                             </div>
                         ))}
                     </div>
+                </div>
+            </div>
+
+            <div className="chart-container top-years-chart">
+                <h3>🏆 Top 5 Anni Più Visti</h3>
+                <ResponsiveContainer width="100%" height={250}>
+                    <BarChart 
+                        data={displayData.top_years || []} 
+                        layout="vertical"
+                        margin={{ top: 5, right: 30, left: 60, bottom: 5 }}
+                    >
+                        <CartesianGrid strokeDasharray="3 3" stroke="#333" horizontal={false} />
+                        <XAxis type="number" stroke="#757575" />
+                        <YAxis 
+                            type="category" 
+                            dataKey="year" 
+                            stroke="#757575"
+                            tick={{ fill: '#ffffff', fontSize: 14, fontWeight: 600 }}
+                        />
+                        <Tooltip
+                            contentStyle={{
+                                background: '#1a1a1a',
+                                border: '2px solid #E50914',
+                                borderRadius: '8px',
+                                padding: '12px 16px',
+                                boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
+                            }}
+                            itemStyle={{
+                                color: '#ffffff',
+                                fontSize: '14px',
+                                fontWeight: '600'
+                            }}
+                            labelStyle={{
+                                color: '#E50914',
+                                fontSize: '14px',
+                                fontWeight: '700',
+                                marginBottom: '4px'
+                            }}
+                            formatter={(value: number) => [`${value} film`, 'Visti']}
+                        />
+                        <Bar 
+                            dataKey="count" 
+                            radius={[0, 8, 8, 0]}
+                        >
+                            {(displayData.top_years || []).map((_, index) => (
+                                <Cell key={`cell-${index}`} fill={yearColors[index % yearColors.length]} />
+                            ))}
+                        </Bar>
+                    </BarChart>
+                </ResponsiveContainer>
+                <div className="top-years-summary">
+                    {(displayData.top_years || []).slice(0, 3).map((item: any, index: number) => (
+                        <div key={item.year} className="year-badge">
+                            <span className="badge-position">#{index + 1}</span>
+                            <span className="badge-year">{item.year}</span>
+                            <span className="badge-count">{item.count} film</span>
+                        </div>
+                    ))}
                 </div>
             </div>
 

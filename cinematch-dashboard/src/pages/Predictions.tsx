@@ -82,7 +82,7 @@ export function Predictions() {
                                     border: '1px solid #2a2a4a',
                                     borderRadius: '8px'
                                 }}
-                                formatter={(value: number) => [`$${value}M`, '']}
+                                formatter={(value) => [`$${value}M`, '']}
                             />
                             <Legend />
                             <Bar name="Previsto" dataKey="predicted" fill="#00529B" radius={[4, 4, 0, 0]} />
