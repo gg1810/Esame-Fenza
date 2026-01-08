@@ -252,15 +252,24 @@ def calculate_advanced_stats(movies: list) -> dict:
     """
     from collections import Counter, defaultdict
     
-    # Colori per i generi
+    # Colori per i generi (Supporto sia Inglese che Italiano per TMDB)
     genre_colors = {
+        # English keys
         "Drama": "#E50914", "Comedy": "#FF6B35", "Action": "#00529B",
         "Thriller": "#8B5CF6", "Horror": "#6B21A8", "Romance": "#EC4899",
         "Sci-Fi": "#06B6D4", "Adventure": "#10B981", "Crime": "#F59E0B",
         "Mystery": "#7C3AED", "Fantasy": "#8B5CF6", "Animation": "#F472B6",
         "Documentary": "#22C55E", "Family": "#FBBF24", "War": "#78716C",
         "History": "#A78BFA", "Music": "#FB7185", "Western": "#D97706",
-        "Sport": "#34D399", "Biography": "#60A5FA"
+        "Sport": "#34D399", "Biography": "#60A5FA", "Musical": "#DB2777",
+        "TV Movie": "#94A3B8",
+        # Italian keys (per chi scarica dati da TMDB in italiano)
+        "Dramma": "#E50914", "Commedia": "#FF6B35", "Azione": "#00529B",
+        "Fantascienza": "#06B6D4", "Avventura": "#10B981", "Crimine": "#F59E0B",
+        "Mistero": "#7C3AED", "Fantastico": "#8B5CF6", "Fantasy": "#8B5CF6",
+        "Animazione": "#F472B6", "Documentario": "#22C55E", "Famiglia": "#FBBF24",
+        "Guerra": "#78716C", "Storia": "#A78BFA", "Musica": "#FB7185",
+        "Biografico": "#60A5FA", "Biografia": "#60A5FA", "Film TV": "#94A3B8"
     }
     default_color = "#9CA3AF"
     
@@ -560,19 +569,34 @@ def process_missing_movies_background(titles_years: list, user_id: str):
     import re
     
     for title, year in titles_years:
-        # Cerca nel catalogo locale (veloce)
-        exists = movies_catalog.find_one({
+        # Cerca nel catalogo locale (veloce) includendo l'anno per evitare omonimi errati
+        query = {
             "$or": [
                 {"title": {"$regex": f"^{re.escape(title)}$", "$options": "i"}},
                 {"original_title": {"$regex": f"^{re.escape(title)}$", "$options": "i"}}
             ]
-        })
+        }
         
+        if year:
+            # Tolleranza ±1 anno anche qui per consistenza
+            query["year"] = {"$in": [year, year-1, year+1]}
+            
+        exists = movies_catalog.find_one(query)
+        
+        # Se non esiste O se esiste ma ha solo la copertina stock (placeholder), cerchiamo su TMDB
+        needs_tmdb = False
         if not exists:
-            # Se non esiste, cerca su TMDB e aggiungi
+            needs_tmdb = True
+        elif not exists.get("poster_url") or STOCK_POSTER_URL in exists.get("poster_url", ""):
+            needs_tmdb = True
+            
+        if needs_tmdb:
+            # Se non esiste, cerca su TMDB e aggiungi/aggiorna
             result = fetch_metadata_from_tmdb(title, year)
             if result:
                 added_count += 1
+                # Se esisteva già nel catalogo locale ma senza poster, facciamo un merge (già gestito da upsert in fetch_metadata_from_tmdb)
+                pass
                 
     print(f"✅ [Background] Aggiunti {added_count} nuovi film al catalogo.")
     
@@ -790,7 +814,7 @@ async def get_user_stats(current_user_id: str = Depends(get_current_user_id)):
         needs_recalc = True
     elif len(stats.get("best_rated_directors", [])) < 30: # Forza ricalcolo se abbiamo ancora le vecchie stats "corte"
         needs_recalc = True
-    elif "genre_data" in stats and stats["genre_data"] and "count" not in stats["genre_data"][0]:
+    elif "genre_data" in stats and stats["genre_data"] and ("count" not in stats["genre_data"][0] or "color" not in stats["genre_data"][0]):
         needs_recalc = True
     
     if needs_recalc:
@@ -846,7 +870,7 @@ async def get_movies_by_person(name: str, type: str, current_user_id: str = Depe
     # Cerchiamo nel catalogo tutti i film di quella persona
     catalog_matches = list(movies_catalog.find({
         field: {"$regex": re.escape(name), "$options": "i"}
-    }, {"title": 1, "original_title": 1, "genres": 1, "poster_url": 1, "poster_path": 1, "year": 1, "avg_vote": 1, "director": 1, "actors": 1}))
+    }, {"title": 1, "original_title": 1, "genres": 1, "poster_url": 1, "poster_path": 1, "year": 1, "avg_vote": 1, "director": 1, "actors": 1, "description": 1, "duration": 1}))
     
     catalog_map = {}
     for cm in catalog_matches:
@@ -1072,14 +1096,13 @@ async def get_user_movies(
         {"_id": 0, "user_id": 0}
     ).sort("added_at", -1).skip(skip).limit(limit))
     
-    # Step 2: Raccogli tutti i titoli per un batch lookup
+    # Step 2: Raccogli TUTTI i titoli per un batch lookup (per garantire dati aggiornati dal catalogo)
     titles_to_lookup = []
     for movie in user_movies:
-        if not movie.get("poster_url") or movie.get("poster_url") == STOCK_POSTER_URL:
-            titles_to_lookup.append({
-                "title": movie["name"].lower(),
-                "year": movie.get("year")
-            })
+        titles_to_lookup.append({
+            "title": movie["name"].lower(),
+            "year": movie.get("year")
+        })
     
     # Step 3: Batch lookup nel catalogo (una sola query)
     if titles_to_lookup:
@@ -1104,68 +1127,71 @@ async def get_user_movies(
                     {"english_title": {"$regex": regex_pattern, "$options": "i"}} # Supporto per titoli inglesi
                 ]
             },
-            {"title": 1, "original_title": 1, "english_title": 1, "year": 1, "poster_url": 1, "imdb_id": 1, "genres": 1, "description": 1, "director": 1, "actors": 1}
+            {"title": 1, "original_title": 1, "english_title": 1, "year": 1, "poster_url": 1, "imdb_id": 1, "genres": 1, "description": 1, "director": 1, "actors": 1, "votes": 1, "avg_vote": 1}
         )
         
         # Costruisci cache con chiave title_year
         for cm in catalog_movies:
-            # Helper per aggiungere alla cache
+            # Helper per aggiungere alla cache con logica di "miglior match"
             def add_to_cache(t, y, movie):
                 if not t: return
                 t_lower = t.lower()
+                
+                # Helper interno per decidere se sostituire un'entry esistente
+                def should_replace(current, new):
+                    if not current: return True
+                    # Preferiamo entry con poster reale rispetto a stock
+                    curr_has_poster = current.get('poster_url') and STOCK_POSTER_URL not in current.get('poster_url', '')
+                    new_has_poster = new.get('poster_url') and STOCK_POSTER_URL not in new.get('poster_url', '')
+                    if new_has_poster and not curr_has_poster: return True
+                    if curr_has_poster and not new_has_poster: return False
+                    # A parità di poster, preferiamo quello con più voti
+                    return (new.get('votes', 0) or 0) > (current.get('votes', 0) or 0)
+
                 # Key con anno
                 key_year = f"{t_lower}_{y}"
-                catalog_cache[key_year] = movie
+                if should_replace(catalog_cache.get(key_year), movie):
+                    catalog_cache[key_year] = movie
+                
                 # Key solo titolo (fallback)
-                if t_lower not in catalog_cache:
+                if should_replace(catalog_cache.get(t_lower), movie):
                     catalog_cache[t_lower] = movie
 
-            # Mappa titolo principale
+            # Mappa tutte le varianti di titolo
             add_to_cache(cm.get('title'), cm.get('year', ''), cm)
-            
-            # Mappa titolo originale
             add_to_cache(cm.get('original_title'), cm.get('year', ''), cm)
-
-            # Mappa titolo inglese
             add_to_cache(cm.get('english_title'), cm.get('year', ''), cm)
         
         # Step 4: Applica i dati del catalogo ai film utente
         for movie in user_movies:
-            if not movie.get("poster_url") or movie.get("poster_url") == STOCK_POSTER_URL:
-                title_lower = movie["name"].lower()
-                year = movie.get("year")
+            title_lower = movie["name"].lower()
+            year = movie.get("year")
+            
+            # Cerca con tolleranza sull'anno (±1) per discrepanze Letterboxd/Catalog (molto comuni)
+            catalog_movie = catalog_cache.get(f"{title_lower}_{year}")
+            
+            if not catalog_movie and year:
+                catalog_movie = catalog_cache.get(f"{title_lower}_{year-1}") or catalog_cache.get(f"{title_lower}_{year+1}")
+            
+            if not catalog_movie:
+                catalog_movie = catalog_cache.get(title_lower)
+            
+            if catalog_movie:
+                # Sovrascriviamo con i dati del catalogo se il poster è migliore o se mancava
+                cat_poster = catalog_movie.get("poster_url")
+                if cat_poster and cat_poster != STOCK_POSTER_URL:
+                    movie["poster_url"] = cat_poster
+                elif not movie.get("poster_url"):
+                    movie["poster_url"] = STOCK_POSTER_URL
                 
-                # Cerca prima con anno, poi solo titolo
-                catalog_movie = catalog_cache.get(f"{title_lower}_{year}") or catalog_cache.get(title_lower)
-                
-                if catalog_movie:
-                    movie["poster_url"] = catalog_movie.get("poster_url") or STOCK_POSTER_URL
-                    movie["imdb_id"] = catalog_movie.get("imdb_id")
-                    movie["genres"] = catalog_movie.get("genres", [])
-                    # Dettagli extra per popup
-                    movie["description"] = catalog_movie.get("description")
-                    movie["director"] = catalog_movie.get("director")
-                    movie["actors"] = catalog_movie.get("actors")
-                    movie["duration"] = catalog_movie.get("duration")
-                    movie["avg_vote"] = catalog_movie.get("avg_vote")
-                else:
-                    # PROVA ARRICCHIMENTO ON-THE-FLY (Max 3 per richiesta per non rallentare)
-                    # Solo se il film non è mai stato cercato prima o non ha nessuna info
-                    try:
-                        fetched_info = fetch_metadata_from_tmdb(movie["name"], movie.get("year"))
-                        if fetched_info:
-                            movie["poster_url"] = fetched_info.get("poster_url")
-                            movie["imdb_id"] = fetched_info.get("imdb_id")
-                            movie["genres"] = fetched_info.get("genres", [])
-                            movie["description"] = fetched_info.get("description")
-                            movie["director"] = fetched_info.get("director")
-                            movie["actors"] = fetched_info.get("actors")
-                            movie["duration"] = fetched_info.get("duration")
-                            movie["avg_vote"] = fetched_info.get("avg_vote")
-                        else:
-                            movie["poster_url"] = STOCK_POSTER_URL
-                    except:
-                        movie["poster_url"] = STOCK_POSTER_URL
+                movie["imdb_id"] = catalog_movie.get("imdb_id")
+                movie["genres"] = catalog_movie.get("genres", [])
+                # Dettagli extra per popup - sync sempre dal catalogo (la fonte di verità)
+                movie["description"] = catalog_movie.get("description")
+                movie["director"] = catalog_movie.get("director")
+                movie["actors"] = catalog_movie.get("actors")
+                movie["duration"] = catalog_movie.get("duration")
+                movie["avg_vote"] = catalog_movie.get("avg_vote")
     
     total = movies_collection.count_documents({"user_id": current_user_id})
     
@@ -1513,7 +1539,7 @@ async def search_catalog(
             {"title": {"$regex": q, "$options": "i"}},
             {"original_title": {"$regex": q, "$options": "i"}}
         ]},
-        {"_id": 0, "imdb_id": 1, "title": 1, "year": 1, "poster_url": 1, "avg_vote": 1, "genres": 1}
+        {"_id": 0, "imdb_id": 1, "title": 1, "year": 1, "poster_url": 1, "avg_vote": 1, "genres": 1, "description": 1, "director": 1, "actors": 1, "duration": 1}
     ).sort("votes", -1).limit(limit))
     
     # Assicura poster_url
