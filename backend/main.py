@@ -598,8 +598,8 @@ async def get_current_user(current_user_id: str = Depends(get_current_user_id)):
 # CINEMA ENDPOINTS
 # ============================================
 # Collection per showtimes cinema
-cinema_db = client["cinema_db"]
-showtimes_collection = cinema_db["showtimes"]
+# usiamo sempre db (cinematch_db) coerentemente
+showtimes_collection = db["showtimes"]
 
 def normalize_title(text: str) -> str:
     """Rimuove accenti e caratteri speciali per matching/ricerca."""

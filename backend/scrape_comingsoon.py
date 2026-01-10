@@ -320,7 +320,7 @@ def save_to_mongodb(data: List[Dict]):
     """Salva i dati su MongoDB."""
     try:
         client = MongoClient("mongodb://localhost:27017/", serverSelectionTimeoutMS=5000)
-        db = client["cinema_db"]
+        db = client["cinematch_db"]
         collection = db["showtimes"]
         
         for record in data:

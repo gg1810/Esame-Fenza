@@ -24,10 +24,10 @@ class CinemaFilmSync:
     
     def __init__(self, mongo_url: str = MONGO_URL, tmdb_api_key: str = TMDB_API_KEY):
         self.client = MongoClient(mongo_url)
-        self.cinema_db = self.client["cinema_db"]
-        self.showtimes = self.cinema_db["showtimes"]
-        
         self.cinematch_db = self.client["cinematch_db"]
+        
+        # Le collection devono stare tutte in cinematch_db
+        self.showtimes = self.cinematch_db["showtimes"]
         self.catalog = self.cinematch_db["movies_catalog"]
         
         self.api_key = tmdb_api_key
