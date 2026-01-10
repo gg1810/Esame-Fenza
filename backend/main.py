@@ -185,10 +185,31 @@ async def startup_event():
         print("🕐 [Scheduler] Avvio scraper programmato a mezzanotte...")
         run_cinema_scraper()
     
+    def scheduled_cinema_sync():
+        """Wrapper per sync_films_to_catalog con controllo anti-duplicazione."""
+        status = db["scraper_progress"].find_one({"_id": "cinema_sync"})
+        is_running = status and status.get("status") == "running"
+        if is_running:
+            print("⏭️ [CinemaSync] Già in esecuzione, salto.")
+            return
+        try:
+            db["scraper_progress"].update_one(
+                {"_id": "cinema_sync"},
+                {"$set": {"status": "running", "updated_at": datetime.utcnow().isoformat()}},
+                upsert=True
+            )
+            print("🔄 [Scheduler] Avvio sync cinema al catalogo...")
+            sync_films_to_catalog()
+        finally:
+            db["scraper_progress"].update_one(
+                {"_id": "cinema_sync"},
+                {"$set": {"status": "idle", "updated_at": datetime.utcnow().isoformat()}}
+            )
+    
     # Scraper ComingSoon alle 00:00 (mezzanotte) - con controllo anti-duplicazione
     scheduler.add_job(scheduled_cinema_scraper, 'cron', hour=0, minute=0, id='cinema_scraper')
-    # Sync film al catalogo alle 00:30
-    scheduler.add_job(sync_films_to_catalog, 'cron', hour=0, minute=30, id='cinema_sync')
+    # Sync film al catalogo alle 00:30 - con controllo anti-duplicazione
+    scheduler.add_job(scheduled_cinema_sync, 'cron', hour=0, minute=30, id='cinema_sync')
     
     scheduler.start()
     print("🕒 Scheduler avviato: Movie Updater ogni 24h + Cinema Scraper a mezzanotte.")
