@@ -15,8 +15,8 @@ MONGO_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 TMDB_API_KEY = "272643841dd72057567786d8fa7f8c5f"
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 
-# Lingue occidentali permesse (come in MovieUpdater)
-ALLOWED_LANGUAGES = ['en', 'it', 'fr', 'de', 'es', 'pt', 'nl', 'da', 'sv', 'no']
+# Lingue permesse (include anche giapponese per anime)
+ALLOWED_LANGUAGES = ['en', 'it', 'fr', 'de', 'es', 'pt', 'nl', 'da', 'sv', 'no', 'ja']
 
 
 class CinemaFilmSync:
@@ -182,8 +182,8 @@ class CinemaFilmSync:
         if cleaned_title != title.lower():
             search_queries.append(cleaned_title)
 
-        # Lingue da provare: italiano, inglese, francese (per film europei)
-        languages = ["it-IT", "en-US", "fr-FR"]
+        # Lingue da provare: italiano, tedesco, inglese, francese, spagnolo, giapponese
+        languages = ["it-IT", "de-DE", "en-US", "fr-FR", "es-ES", "ja-JP"]
         
         for lang in languages:
             for query in search_queries:

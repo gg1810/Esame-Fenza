@@ -4,9 +4,8 @@ from datetime import datetime, timedelta
 from pymongo import MongoClient
 
 class MovieUpdater:
-    # Solo lingue occidentali (Inglese, Italiano, Francese, Tedesco, Spagnolo, Portoghese, ecc.)
-    # Evita Bollywood (hi, ml, ta, te), film asiatici (ja, ko, zh), ecc.
-    ALLOWED_LANGUAGES = ['en', 'it', 'fr', 'de', 'es', 'pt', 'nl', 'da', 'sv', 'no']
+    # Lingue permesse (include anche giapponese per anime)
+    ALLOWED_LANGUAGES = ['en', 'it', 'fr', 'de', 'es', 'pt', 'nl', 'da', 'sv', 'no', 'ja']
 
     def __init__(self, mongo_url, tmdb_api_key):
         self.client = MongoClient(mongo_url)
@@ -43,15 +42,14 @@ class MovieUpdater:
         count = 0
         
         # 1. Recupera film 'Now Playing' (Cinema)
+        print("   📽️ Fetch Now Playing...")
         count += self._fetch_from_tmdb_endpoint("/movie/now_playing", "now_playing")
         
-        # 2. Recupera film popolari del 2026 (per coprire streaming/digital)
-        # TMDB non ha un endpoint "digital releases" esplicito, ma popularity + year è ottimo
+        # 2. Recupera film popolari 2025-2026
         current_year = datetime.now().year
-        # Se siamo nel 2026 o oltre, cerchiamo specificamente quell'anno
-        target_year = max(current_year, 2026) 
-        
-        count += self._discover_movies(target_year)
+        for year in range(current_year, current_year - 2, -1):
+            print(f"   📅 Discover film {year}...")
+            count += self._discover_movies(year)
         
         print(f"✅ [Updater] Aggiornamento completato. Aggiunti/Aggiornati {count} film.")
         return count
@@ -65,7 +63,7 @@ class MovieUpdater:
             "sort_by": "popularity.desc",
             "primary_release_year": year,
             "with_original_language": "|".join(self.ALLOWED_LANGUAGES),
-            "vote_count.gte": 50, # Filtra film troppo oscuri
+            "vote_count.gte": 10, # Ridotto per includere film nuovi
             "page": 1
         }
         

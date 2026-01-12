@@ -177,8 +177,8 @@ async def startup_event():
             )
     
     scheduler = BackgroundScheduler()
-    # Esegue ogni 24 ore - con controllo anti-duplicazione
-    scheduler.add_job(scheduled_movie_updater, 'interval', hours=24)
+    # Esegue ogni giorno alle 01:00 - con controllo anti-duplicazione
+    scheduler.add_job(scheduled_movie_updater, 'cron', hour=1, minute=0, id='movie_updater')
     
     # --- SCHEDULER CINEMA CAMPANIA ---
     from scrape_comingsoon import main as run_cinema_scraper
@@ -1132,8 +1132,8 @@ async def get_cinema_films(
         if catalog_info and catalog_info.get("director"):
             director = catalog_info.get("director")
 
-        # Limita a 5 cinema per film
-        cinemas = showtime.get("cinemas", [])[:5]
+        # Mostra tutti i cinema per film (rimosso limite precedente [:5])
+        cinemas = showtime.get("cinemas", [])
         
         # Formatta orari per ogni cinema
         formatted_cinemas = []
@@ -1155,7 +1155,7 @@ async def get_cinema_films(
             "director": director,
             "poster": catalog_info.get("poster_url") if (catalog_info and catalog_info.get("poster_url")) else "https://via.placeholder.com/500x750/1a1a2e/e50914?text=No+Poster",
             "description": catalog_info.get("description") if catalog_info else "Trama non disponibile per questo film in programmazione.",
-            "rating": catalog_info.get("avg_vote") if catalog_info else None,
+            "rating": catalog_info.get("avg_vote") if (catalog_info and catalog_info.get("avg_vote")) else None,
             "genres": catalog_info.get("genres", []) if catalog_info else ["In Sala"],
             "year": catalog_info.get("year") if catalog_info else datetime.now().year,
             "duration": catalog_info.get("duration") if catalog_info else None,
@@ -1167,8 +1167,14 @@ async def get_cinema_films(
         # Fallback poster se non trovato
         if not film["poster"]:
             film["poster"] = "https://via.placeholder.com/500x750/1a1a2e/e50914?text=No+Poster"
+        # Salta film senza cinema/sale per questa data
+        if not formatted_cinemas:
+            continue
         
         films.append(film)
+    
+    # Ordina film per rating decrescente (film senza rating in fondo)
+    films.sort(key=lambda f: (f["rating"] is not None, f["rating"] or 0), reverse=True)
     
     return {
         "province": user_province.capitalize(),
