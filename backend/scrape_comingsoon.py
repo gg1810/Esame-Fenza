@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 import time
 import re
 import os
+import pytz
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from pymongo import MongoClient
@@ -299,6 +300,7 @@ def scrape_province(province: Dict) -> List[Dict]:
         showtimes = get_film_showtimes(province_slug, movie["id"])
         
         if showtimes:
+            italy_tz = pytz.timezone('Europe/Rome')
             result = {
                 "province": province_name,
                 "province_slug": province_slug,
@@ -307,7 +309,7 @@ def scrape_province(province: Dict) -> List[Dict]:
                 "film_original_title": film_details.get("original_title", ""),
                 "director": film_details.get("director", ""),
                 "cinemas": showtimes,
-                "updated_at": datetime.now().isoformat()
+                "updated_at": datetime.now(italy_tz).isoformat()
             }
             results.append(result)
             
@@ -327,8 +329,9 @@ def save_to_mongodb(data: List[Dict]):
         db = client["cinematch_db"]
         collection = db["showtimes"]
         
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        cutoff_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        italy_tz = pytz.timezone('Europe/Rome')
+        today_str = datetime.now(italy_tz).strftime("%Y-%m-%d")
+        cutoff_date = (datetime.now(italy_tz) - timedelta(days=30)).strftime("%Y-%m-%d")
         
         for record in data:
             film_id = record["film_id"]
@@ -340,7 +343,7 @@ def save_to_mongodb(data: List[Dict]):
                 "film_title": record["film_title"],
                 "film_original_title": record.get("film_original_title", ""),
                 "director": record.get("director", ""),
-                "last_updated": datetime.now().isoformat()
+                "last_updated": datetime.now(italy_tz).isoformat()
             }
             
             # Struttura: regions.<region>.dates.<date>.cinemas.<cinema> = {info + showtimes}
@@ -391,6 +394,7 @@ def update_progress(current: int, total: int, status: str, province: str = ""):
     """Updates the scraper progress in MongoDB."""
     try:
         collection = get_progress_collection()
+        italy_tz = pytz.timezone('Europe/Rome')
         collection.update_one(
             {"_id": "cinema_scraper"},
             {"$set": {
@@ -399,7 +403,7 @@ def update_progress(current: int, total: int, status: str, province: str = ""):
                 "percentage": round((current / total) * 100) if total > 0 else 0,
                 "status": status,
                 "current_province": province,
-                "updated_at": datetime.now().isoformat()
+                "updated_at": datetime.now(italy_tz).isoformat()
             }},
             upsert=True
         )
@@ -410,6 +414,7 @@ def clear_progress():
     """Clears the progress when scraping is complete."""
     try:
         collection = get_progress_collection()
+        italy_tz = pytz.timezone('Europe/Rome')
         collection.update_one(
             {"_id": "cinema_scraper"},
             {"$set": {
@@ -418,7 +423,7 @@ def clear_progress():
                 "percentage": 100,
                 "status": "completed",
                 "current_province": "",
-                "updated_at": datetime.now().isoformat()
+                "updated_at": datetime.now(italy_tz).isoformat()
             }},
             upsert=True
         )
@@ -427,9 +432,10 @@ def clear_progress():
 
 
 def main():
+    italy_tz = pytz.timezone('Europe/Rome')
     print("=" * 70)
     print("🎬 ComingSoon.it Scraper v6 (titolo orig. + regista)")
-    print(f"⏰ Avvio: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"⏰ Avvio: {datetime.now(italy_tz).strftime('%Y-%m-%d %H:%M:%S')} (ora italiana)")
     print("=" * 70)
     
     provinces = CAMPANIA_PROVINCES
@@ -490,7 +496,8 @@ def main():
     # Mark as completed
     clear_progress()
     
-    print(f"\n✅ Completato: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    italy_tz = pytz.timezone('Europe/Rome')
+    print(f"\n✅ Completato: {datetime.now(italy_tz).strftime('%Y-%m-%d %H:%M:%S')} (ora italiana)")
 
 
 if __name__ == "__main__":

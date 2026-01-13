@@ -17,3 +17,4 @@ pyspark == 3.4.1
 llama-index-llms-ollama
 pydantic>=2.0.0
 httpx >= 0.25.0
+kafka-python==2.0.2

@@ -7,6 +7,7 @@ import requests
 import re
 import os
 import unicodedata
+import pytz
 from datetime import datetime
 from pymongo import MongoClient
 
@@ -344,7 +345,7 @@ class CinemaFilmSync:
                 "link_imdb": f"https://www.imdb.com/title/{real_imdb_id}/" if real_imdb_id else None,
                 "poster_url": poster_url,
                 "has_real_poster": True,
-                "loaded_at": datetime.utcnow().isoformat(),
+                "loaded_at": datetime.now(pytz.timezone('Europe/Rome')).isoformat(),
                 "source": "comingsoon_sync"
             }
             
@@ -364,7 +365,7 @@ class CinemaFilmSync:
         """Esegue la sincronizzazione completa."""
         print("=" * 60)
         print("🔄 Cinema Film Sync")
-        print(f"⏰ Avvio: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"⏰ Avvio: {datetime.now(pytz.timezone('Europe/Rome')).strftime('%Y-%m-%d %H:%M:%S')}")
         print("=" * 60)
         
         # 1. Ottieni film unici da showtimes
@@ -446,7 +447,7 @@ class CinemaFilmSync:
         print(f"  Già nel catalogo: {len(existing)}")
         print(f"  Aggiunti ora: {len(added)}")
         print(f"  Non trovati/filtrati: {len(failed)}")
-        print(f"\n✅ Completato: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"\n✅ Completato: {datetime.now(pytz.timezone('Europe/Rome')).strftime('%Y-%m-%d %H:%M:%S')}")
         
         return {
             "total": len(films),

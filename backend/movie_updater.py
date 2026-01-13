@@ -1,5 +1,6 @@
 import requests
 import os
+import pytz
 from datetime import datetime, timedelta
 from pymongo import MongoClient
 
@@ -46,7 +47,8 @@ class MovieUpdater:
         count += self._fetch_from_tmdb_endpoint("/movie/now_playing", "now_playing")
         
         # 2. Recupera film popolari 2025-2026
-        current_year = datetime.now().year
+        italy_tz = pytz.timezone('Europe/Rome')
+        current_year = datetime.now(italy_tz).year
         for year in range(current_year, current_year - 2, -1):
             print(f"   📅 Discover film {year}...")
             count += self._discover_movies(year)
@@ -209,7 +211,7 @@ class MovieUpdater:
                 "link_imdb": f"https://www.imdb.com/title/{imdb_id_real}/" if imdb_id_real else None,
                 "poster_url": poster_url,
                 "has_real_poster": True,
-                "loaded_at": datetime.utcnow().isoformat(),
+                "loaded_at": datetime.now(pytz.timezone('Europe/Rome')).isoformat(),
                 "source": f"auto_updater_{source}"
             }
             

@@ -6,6 +6,7 @@ import json
 import re
 import logging
 import os
+import pytz
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Tuple
 import asyncio
@@ -73,7 +74,7 @@ def get_random_movies(n: int = 5) -> List[Dict]:
     ]
     movies = list(movies_catalog.aggregate(pipeline))
     
-    week_ago = datetime.utcnow() - timedelta(days=7)
+    week_ago = datetime.now(pytz.timezone('Europe/Rome')) - timedelta(days=7)
     recent_movie_ids = set(
         q.get("movie_id") for q in quiz_questions.find(
             {"created_at": {"$gte": week_ago}},
@@ -270,8 +271,8 @@ GENERA ORA IL TUO QUIZ (output SOLO JSON valido, nessun altro testo):
             "explanation": data.explanation,
             "category": data.category,
             "difficulty": "medium",
-            "quiz_date": datetime.utcnow().strftime("%Y-%m-%d"),
-            "created_at": datetime.utcnow(),
+            "quiz_date": datetime.now(pytz.timezone('Europe/Rome')).strftime("%Y-%m-%d"),
+            "created_at": datetime.now(pytz.timezone('Europe/Rome')),
             "used_count": 0,
             "last_used": None
         }
@@ -353,8 +354,9 @@ async def run_daily_quiz_generation():
     return save_questions_to_db(questions)
 
 def get_daily_questions(n: int = 5) -> List[Dict]:
-    """Ritorna le domande di oggi (basato su quiz_date)."""
-    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+    """Ritorna le domande di oggi (basato su quiz_date, ora italiana)."""
+    italy_tz = pytz.timezone('Europe/Rome')
+    today_str = datetime.now(italy_tz).strftime("%Y-%m-%d")
     questions = list(quiz_questions.find({"quiz_date": today_str}, {"_id": 0}).limit(n))
     
     if len(questions) < n:

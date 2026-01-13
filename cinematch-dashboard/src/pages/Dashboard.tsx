@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter, ZAxis, Legend, ReferenceLine } from 'recharts';
 import { StatsCard } from '../components/StatsCard';
 import { MovieCard } from '../components/MovieCard';
@@ -9,9 +9,11 @@ interface DashboardData {
     total_watched: number;
     avg_rating: number;
     favorite_genre: string;
-    monthly_data: any[];
     genre_data: any[];
     top_years?: { year: number; count: number }[];
+    // Year data (new structure)
+    year_data?: { year: number; monthly_data: any[]; total_films: number }[];
+    available_years?: number[];
     // Nuove statistiche
     rating_chart_data?: { rating: string; count: number; stars: number }[];
     watch_time_hours?: number;
@@ -38,10 +40,17 @@ interface MonthlyStats {
     available_years: number[];
 }
 
+interface GlobalTrends {
+    top_movies: { title: string; count: number; poster_path: string | null; _id: string }[];
+    trending_genres: { genre: string; count: number }[];
+}
+
 export function Dashboard() {
     const navigate = useNavigate();
     const [data, setData] = useState<DashboardData | null>(null);
+    const [globalTrends, setGlobalTrends] = useState<GlobalTrends | null>(null);
     const [loading, setLoading] = useState(true);
+    const [syncing, setSyncing] = useState(false); // Sync status generic
     const [noData, setNoData] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [uploadMessage, setUploadMessage] = useState<string | null>(null);
@@ -72,9 +81,21 @@ export function Dashboard() {
             })
             .then(stats => {
                 if (stats && !stats.detail) {
+                    console.log('📊 Stats received:', {
+                        genre_data_length: stats.genre_data?.length || 0,
+                        top_actors_length: stats.top_actors?.length || 0,
+                        top_directors_length: stats.top_directors?.length || 0
+                    });
                     setData(stats);
                     setNoData(false);
                     localStorage.setItem('has_data', 'true');
+
+                    // Check Sync Status
+                    if (stats.sync_status === 'syncing') {
+                        setSyncing(true);
+                    } else {
+                        setSyncing(false);
+                    }
                 }
                 setLoading(false);
             })
@@ -98,6 +119,15 @@ export function Dashboard() {
             })
             .catch(err => console.error('Errore caricamento stats mensili:', err));
     };
+
+    const fetchGlobalTrends = () => {
+        fetch('http://localhost:8000/trends/global')
+            .then(res => res.json())
+            .then(trends => {
+                setGlobalTrends(trends);
+            })
+            .catch(err => console.error('Errore trend globali:', err));
+    }
 
     const fetchPersonMovies = (name: string, type: 'director' | 'actor') => {
         setLoadingPersonMovies(true);
@@ -125,7 +155,15 @@ export function Dashboard() {
     useEffect(() => {
         fetchStats();
         fetchMonthlyStats(selectedYear);
-    }, []);
+        fetchGlobalTrends();
+
+        // Polling per sync status se in corso
+        const interval = setInterval(() => {
+            if (syncing) fetchStats();
+        }, 5000); // Check ogni 5s se sta sincronizzando
+
+        return () => clearInterval(interval);
+    }, [syncing]);
 
     useEffect(() => {
         fetchMonthlyStats(selectedYear);
@@ -185,8 +223,8 @@ export function Dashboard() {
                     <div
                         className={`upload-zone ${uploading ? 'uploading' : ''}`}
                         onClick={() => fileInputRef.current?.click()}
-                        onDragOver={(e) => { e.preventDefault(); }}
-                        onDrop={(e) => {
+                        onDragOver={(e: React.DragEvent) => { e.preventDefault(); }}
+                        onDrop={(e: React.DragEvent) => {
                             e.preventDefault();
                             const file = e.dataTransfer.files[0];
                             if (file) handleFileUpload(file);
@@ -242,7 +280,8 @@ export function Dashboard() {
         total_watched: 0,
         avg_rating: 0,
         favorite_genre: 'Nessuno',
-        monthly_data: [],
+        year_data: [],
+        available_years: [],
         genre_data: [],
         top_years: [],
         rating_chart_data: [],
@@ -274,8 +313,17 @@ export function Dashboard() {
         }
     };
 
-    const monthlyDataForYear = monthlyStats?.monthly_data || displayData.monthly_data;
-    const filmsInSelectedYear = monthlyStats?.total_films || 0;
+    // Usa monthlyStats se disponibile, altrimenti cerca in year_data
+    const getMonthlyDataForYear = () => {
+        if (monthlyStats?.monthly_data) return monthlyStats.monthly_data;
+        // Fallback: cerca in year_data locale
+        const yearEntry = displayData.year_data?.find(y => y.year === selectedYear);
+        return yearEntry?.monthly_data || [];
+    };
+    
+    const monthlyDataForYear = getMonthlyDataForYear();
+    const filmsInSelectedYear = monthlyStats?.total_films || 
+        displayData.year_data?.find(y => y.year === selectedYear)?.total_films || 0;
 
     // Formatta ore totali
     const totalHours = displayData.watch_time_hours || 0;
@@ -308,7 +356,14 @@ export function Dashboard() {
     return (
         <div className="dashboard-page">
             <div className="page-header">
-                <h1>Dashboard</h1>
+                <div className="header-title-row">
+                    <h1>Dashboard</h1>
+                    {syncing && (
+                        <div className="sync-badge" title="Stiamo aggiornando le tue statistiche...">
+                            <span className="sync-icon">🔄</span> Syncing...
+                        </div>
+                    )}
+                </div>
                 <p>Panoramica del tuo storico cinematografico</p>
             </div>
 
@@ -346,52 +401,7 @@ export function Dashboard() {
             {/* ============================================
                 SEZIONE QUIZ STATS
                 ============================================ */}
-            <div className={`quiz-stats-widget ${hideQuizStats ? 'blurred-mode' : ''}`}>
-                <div className="quiz-stats-header">
-                    <h3>🧠 Quiz Cinematografico</h3>
-                    <button className="hide-quiz-btn" onClick={toggleHideQuizStats} title={hideQuizStats ? "Mostra statistiche" : "Nascondi statistiche"}>
-                        {hideQuizStats ? '👁️' : '✕'}
-                    </button>
-                </div>
-
-                <div className="quiz-stats-container">
-                    {hideQuizStats && (
-                        <div className="quiz-blur-overlay">
-                            <button className="show-quiz-btn" onClick={toggleHideQuizStats}>
-                                👁️ Mostra Statistiche
-                            </button>
-                        </div>
-                    )}
-
-                    {hasQuizToday ? (
-                        <div className="quiz-stats-content">
-                            <div className="quiz-stat-item correct">
-                                <span className="quiz-stat-value">{quizCorrect}</span>
-                                <span className="quiz-stat-label">✓ Corrette</span>
-                            </div>
-                            <div className="quiz-stat-item wrong">
-                                <span className="quiz-stat-value">{quizWrong}</span>
-                                <span className="quiz-stat-label">✗ Sbagliate</span>
-                            </div>
-                            <div className="quiz-stat-item accuracy">
-                                <span className="quiz-stat-value">{quizAccuracy}%</span>
-                                <span className="quiz-stat-label">Precisione</span>
-                            </div>
-                            <div className="quiz-stat-item attempts">
-                                <span className="quiz-stat-value">{displayData.quiz_total_attempts || 0}</span>
-                                <span className="quiz-stat-label">Quiz Completati</span>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="quiz-cta">
-                            <p>Non hai ancora fatto il quiz di oggi! Metti alla prova le tue conoscenze cinematografiche 🎬</p>
-                            <button className="quiz-cta-btn" onClick={() => navigate('/quiz')}>
-                                Fai il Quiz →
-                            </button>
-                        </div>
-                    )}
-                </div>
-            </div>
+            {/* SEZIONE QUIZ MOSSA IN FONDO */}
 
             {/* ============================================
                 SEZIONE 2: GRAFICI PRINCIPALI (esistenti)
@@ -431,39 +441,48 @@ export function Dashboard() {
                 {/* Grafico Distribuzione Generi */}
                 <div className="chart-container">
                     <h3>🎭 Distribuzione Generi</h3>
-                    <ResponsiveContainer width="100%" height={300}>
-                        <PieChart>
-                            <Pie
-                                data={displayData.genre_data}
-                                cx="50%"
-                                cy="50%"
-                                innerRadius={60}
-                                outerRadius={100}
-                                paddingAngle={5}
-                                dataKey="value"
-                                nameKey="name"
-                            >
-                                {displayData.genre_data.map((entry: any, index: number) => (
-                                    <Cell key={`cell-${index}`} fill={entry.color} />
+                    {displayData.genre_data && displayData.genre_data.length > 0 ? (
+                        <>
+                            <ResponsiveContainer width="100%" height={300}>
+                                <PieChart>
+                                    <Pie
+                                        data={displayData.genre_data}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={60}
+                                        outerRadius={100}
+                                        paddingAngle={5}
+                                        dataKey="value"
+                                        nameKey="name"
+                                    >
+                                        {displayData.genre_data.map((entry: any, index: number) => (
+                                            <Cell key={`cell-${index}`} fill={entry.color} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip
+                                        contentStyle={{ background: '#1a1a1a', border: '2px solid #E50914', borderRadius: '8px' }}
+                                        itemStyle={{ color: '#ffffff' }}
+                                        labelStyle={{ color: '#E50914', fontWeight: '700' }}
+                                        formatter={(value: number, name: string) => [`${value}%`, name]}
+                                    />
+                                </PieChart>
+                            </ResponsiveContainer>
+                            <div className="genre-legend">
+                                {displayData.genre_data.map((genre: any) => (
+                                    <div key={genre.name} className="legend-item">
+                                        <span className="legend-color" style={{ background: genre.color }}></span>
+                                        <span>{genre.name}</span>
+                                        <span className="legend-value">{genre.value}%</span>
+                                    </div>
                                 ))}
-                            </Pie>
-                            <Tooltip
-                                contentStyle={{ background: '#1a1a1a', border: '2px solid #E50914', borderRadius: '8px' }}
-                                itemStyle={{ color: '#ffffff' }}
-                                labelStyle={{ color: '#E50914', fontWeight: '700' }}
-                                formatter={(value: number, name: string) => [`${value}%`, name]}
-                            />
-                        </PieChart>
-                    </ResponsiveContainer>
-                    <div className="genre-legend">
-                        {displayData.genre_data.map((genre: any) => (
-                            <div key={genre.name} className="legend-item">
-                                <span className="legend-color" style={{ background: genre.color }}></span>
-                                <span>{genre.name}</span>
-                                <span className="legend-value">{genre.value}%</span>
                             </div>
-                        ))}
-                    </div>
+                        </>
+                    ) : (
+                        <div className="no-data-placeholder">
+                            <span className="placeholder-icon">📊</span>
+                            <p>Nessun dato generi disponibile</p>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -626,6 +645,60 @@ export function Dashboard() {
             {/* ============================================
                 SEZIONE 5: REGISTI
                 ============================================ */}
+            {/* ============================================
+                SEZIONE GLOBAL TRENDS (NETFLIX STYLE)
+                ============================================ */}
+            <h2 className="section-title main-section-divider">🌍 Community Trends</h2>
+            <div className="global-trends-section">
+                <div className="trends-scroll-container">
+                    <h3>🔥 Top 10 Più Visti Oggi</h3>
+                    <div className="netflix-row">
+                        {globalTrends?.top_movies?.map((movie, index) => {
+                            const posterUrl = movie.poster_path && movie.poster_path.startsWith('http')
+                                ? movie.poster_path
+                                : movie.poster_path
+                                    ? `https://image.tmdb.org/t/p/w200${movie.poster_path}`
+                                    : 'https://via.placeholder.com/160x240/1a1a2e/e50914?text=No+Poster';
+
+                            return (
+                                <div key={index} className="trend-card" title={movie.title}>
+                                    <div className="trend-rank">{index + 1}</div>
+                                    <img
+                                        src={posterUrl}
+                                        alt={movie.title}
+                                        className="trend-poster"
+                                        onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+                                            e.currentTarget.src = 'https://via.placeholder.com/160x240/1a1a2e/e50914?text=No+Poster';
+                                        }}
+                                    />
+                                    <div className="trend-info">
+                                        <h4>{movie.title}</h4>
+                                        <span>{movie.count} visioni</span>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {(!globalTrends?.top_movies || globalTrends.top_movies.length === 0) && (
+                            <p>Caricamento trends...</p>
+                        )}
+                    </div>
+                </div>
+
+                <div className="chart-container" style={{ marginTop: '20px' }}>
+                    <h3>📈 Generi di Tendenza</h3>
+                    <div className="genre-tags-cloud">
+                        {globalTrends?.trending_genres?.map((g, i) => (
+                            <span key={i} className="genre-tag-chip">
+                                {g.genre} <small>({g.count})</small>
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            {/* ============================================
+                SEZIONE 5: REGISTI
+                ============================================ */}
             <h2 className="section-title main-section-divider">🎬 Analisi Registi</h2>
             <div className="rankings-section">
                 {/* Top Registi (Frequenza) */}
@@ -780,6 +853,56 @@ export function Dashboard() {
                             <p className="no-data">Nessun attore con almeno {minMoviesFilter} film</p>
                         )}
                     </div>
+                </div>
+            </div>
+
+            {/* ============================================
+                SEZIONE QUIZ STATS (SPOSTATA QUI)
+                ============================================ */}
+            <div className={`quiz-stats-widget ${hideQuizStats ? 'blurred-mode' : ''}`} style={{ marginBottom: '30px' }}>
+                <div className="quiz-stats-header">
+                    <h3>🧠 Quiz Cinematografico</h3>
+                    <button className="hide-quiz-btn" onClick={toggleHideQuizStats} title={hideQuizStats ? "Mostra statistiche" : "Nascondi statistiche"}>
+                        {hideQuizStats ? '👁️' : '✕'}
+                    </button>
+                </div>
+
+                <div className="quiz-stats-container">
+                    {hideQuizStats && (
+                        <div className="quiz-blur-overlay">
+                            <button className="show-quiz-btn" onClick={toggleHideQuizStats}>
+                                👁️ Mostra Statistiche
+                            </button>
+                        </div>
+                    )}
+
+                    {hasQuizToday ? (
+                        <div className="quiz-stats-content">
+                            <div className="quiz-stat-item correct">
+                                <span className="quiz-stat-value">{quizCorrect}</span>
+                                <span className="quiz-stat-label">✓ Corrette</span>
+                            </div>
+                            <div className="quiz-stat-item wrong">
+                                <span className="quiz-stat-value">{quizWrong}</span>
+                                <span className="quiz-stat-label">✗ Sbagliate</span>
+                            </div>
+                            <div className="quiz-stat-item accuracy">
+                                <span className="quiz-stat-value">{quizAccuracy}%</span>
+                                <span className="quiz-stat-label">Precisione</span>
+                            </div>
+                            <div className="quiz-stat-item attempts">
+                                <span className="quiz-stat-value">{displayData.quiz_total_attempts || 0}</span>
+                                <span className="quiz-stat-label">Quiz Completati</span>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="quiz-cta">
+                            <p>Non hai ancora fatto il quiz di oggi! Metti alla prova le tue conoscenze cinematografiche 🎬</p>
+                            <button className="quiz-cta-btn" onClick={() => navigate('/quiz')}>
+                                Fai il Quiz →
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
 

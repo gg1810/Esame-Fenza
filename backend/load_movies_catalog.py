@@ -4,6 +4,7 @@ Include gestione dei poster con fallback a immagine stock.
 """
 import os
 import pandas as pd
+import pytz
 from datetime import datetime
 from pymongo import MongoClient
 from typing import Optional
@@ -147,7 +148,7 @@ def load_movies_catalog():
                 "link_imdb": clean_value(row.get('link_imdb')),
                 "poster_url": get_poster_url(row),
                 "has_real_poster": bool(clean_value(row.get('poster_url'))),
-                "loaded_at": datetime.utcnow().isoformat()
+                "loaded_at": datetime.now(pytz.timezone('Europe/Rome')).isoformat()
             }
             
             movies.append(movie)

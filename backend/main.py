@@ -16,11 +16,13 @@ import random
 import re
 import unicodedata
 from datetime import datetime, timedelta
+import pytz
 from pymongo import MongoClient
 from pydantic import BaseModel
 from typing import Optional, List, Dict
 from auth import get_password_hash, verify_password, create_access_token, get_current_user_id
 from quiz_generator import get_daily_questions
+from kafka_producer import get_kafka_producer
 
 # ============================================
 # APP CONFIGURATION
@@ -34,7 +36,11 @@ app = FastAPI(
 # CORS - permette chiamate dal frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In produzione specificare i domini
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,6 +51,9 @@ app.add_middleware(
 TMDB_API_KEY = "272643841dd72057567786d8fa7f8c5f"
 # ============================================
 MONGO_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+
+# Timezone italiana (usata in tutto il codice)
+italy_tz = pytz.timezone('Europe/Rome')
 client = MongoClient(MONGO_URL)
 db = client.cinematch_db
 
@@ -82,6 +91,20 @@ def normalize_title(text: str) -> str:
     result = " ".join(result.split()).lower()
     result = " ".join(result.split()).lower()
     return result
+
+def mongo_to_dict(obj):
+    """Converte oggetti MongoDB (come ObjectId) in tipi serializzabili JSON."""
+    if obj is None:
+        return None
+    if isinstance(obj, list):
+        return [mongo_to_dict(item) for item in obj]
+    if isinstance(obj, dict):
+        return {k: (str(v) if k == "_id" else mongo_to_dict(v)) for k, v in obj.items()}
+    # Per altri tipi non serializzabili, converti in stringa se necessario
+    from bson import ObjectId
+    if isinstance(obj, ObjectId):
+        return str(obj)
+    return obj
 
 
 
@@ -144,7 +167,7 @@ async def startup_event():
             "password": get_password_hash("Pasquale19!"),
             "user_id": "pasquale.langellotti",
             "full_name": "Pasquale Langellotti",
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(pytz.timezone('Europe/Rome')).isoformat(),
             "is_active": True,
             "has_data": False
         })
@@ -158,6 +181,7 @@ async def startup_event():
     
     def scheduled_movie_updater():
         """Wrapper per MovieUpdater che controlla se è già in esecuzione."""
+        italy_tz = pytz.timezone('Europe/Rome')
         status = db["scraper_progress"].find_one({"_id": "movie_updater"})
         is_running = status and status.get("status") == "running"
         if is_running:
@@ -166,19 +190,20 @@ async def startup_event():
         try:
             db["scraper_progress"].update_one(
                 {"_id": "movie_updater"},
-                {"$set": {"status": "running", "updated_at": datetime.utcnow().isoformat()}},
+                {"$set": {"status": "running", "updated_at": datetime.now(italy_tz).isoformat()}},
                 upsert=True
             )
             updater.fetch_new_releases()
         finally:
             db["scraper_progress"].update_one(
                 {"_id": "movie_updater"},
-                {"$set": {"status": "idle", "updated_at": datetime.utcnow().isoformat()}}
+                {"$set": {"status": "idle", "updated_at": datetime.now(italy_tz).isoformat()}}
             )
     
     scheduler = BackgroundScheduler()
-    # Esegue ogni giorno alle 01:00 - con controllo anti-duplicazione
-    scheduler.add_job(scheduled_movie_updater, 'cron', hour=1, minute=0, id='movie_updater')
+    # Esegue ogni giorno alle 01:00 ora italiana - con controllo anti-duplicazione
+    italy_tz = pytz.timezone('Europe/Rome')
+    scheduler.add_job(scheduled_movie_updater, 'cron', hour=1, minute=0, timezone=italy_tz, id='movie_updater')
     
     # --- SCHEDULER CINEMA CAMPANIA ---
     from scrape_comingsoon import main as run_cinema_scraper
@@ -186,6 +211,7 @@ async def startup_event():
     
     def run_cinema_sync_with_lock():
         """Esegue il sync con lock anti-duplicazione."""
+        italy_tz = pytz.timezone('Europe/Rome')
         status = db["scraper_progress"].find_one({"_id": "cinema_sync"})
         is_running = status and status.get("status") == "running"
         if is_running:
@@ -194,7 +220,7 @@ async def startup_event():
         try:
             db["scraper_progress"].update_one(
                 {"_id": "cinema_sync"},
-                {"$set": {"status": "running", "updated_at": datetime.utcnow().isoformat()}},
+                {"$set": {"status": "running", "updated_at": datetime.now(italy_tz).isoformat()}},
                 upsert=True
             )
             print("🔄 [Cinema] Avvio sync al catalogo...")
@@ -205,7 +231,7 @@ async def startup_event():
         finally:
             db["scraper_progress"].update_one(
                 {"_id": "cinema_sync"},
-                {"$set": {"status": "idle", "updated_at": datetime.utcnow().isoformat()}}
+                {"$set": {"status": "idle", "updated_at": datetime.now(italy_tz).isoformat()}}
             )
     
     def scheduled_cinema_scraper():
@@ -225,8 +251,9 @@ async def startup_event():
         except Exception as e:
             print(f"❌ [Scheduler] Errore durante scraper/sync: {e}")
     
-    # Scraper + Sync alle 00:00 (mezzanotte) - concatenati
-    scheduler.add_job(scheduled_cinema_scraper, 'cron', hour=0, minute=0, id='cinema_scraper_and_sync')
+    # Scraper + Sync alle 00:00 (mezzanotte) ora italiana - concatenati
+    italy_tz = pytz.timezone('Europe/Rome')
+    scheduler.add_job(scheduled_cinema_scraper, 'cron', hour=0, minute=0, timezone=italy_tz, id='cinema_scraper_and_sync')
     
     # Quiz AI generation alle 03:00 (ogni notte)
     def scheduled_quiz_generation():
@@ -241,10 +268,10 @@ async def startup_event():
         except Exception as e:
             print(f"❌ [Quiz] Errore generazione: {e}")
     
-    scheduler.add_job(scheduled_quiz_generation, 'cron', hour=2, minute=50, id='quiz_generation')
+    scheduler.add_job(scheduled_quiz_generation, 'cron', hour=2, minute=50, timezone=italy_tz, id='quiz_generation')
     
     scheduler.start()
-    print("🕒 Scheduler avviato: Movie Updater ogni 24h + Cinema Scraper+Sync a mezzanotte + Quiz AI alle 03:00.")
+    print("🕒 Scheduler avviato: Movie Updater alle 01:00 + Cinema Scraper+Sync a mezzanotte + Quiz AI alle 02:50 (ora italiana).")
     
     # Eseguiamo anche un update SUBITO all'avvio in background (con lock)
     import threading
@@ -254,12 +281,30 @@ async def startup_event():
     # --------------------------------------------
     # STALE DATA CHECK (Auto-Start Scraper + Sync)
     # --------------------------------------------
-    # Controlla se i dati del cinema sono aggiornati a oggi.
+    # Controlla se i dati del cinema sono aggiornati a oggi (ora italiana).
     # Se la data ultima esecuzione != oggi, avvia lo scraper.
     try:
+        italy_tz = pytz.timezone('Europe/Rome')
         scraper_status = db["scraper_progress"].find_one({"_id": "cinema_scraper"})
-        last_run_date = scraper_status.get("updated_at", "")[:10] if scraper_status else ""
-        today_date = datetime.utcnow().strftime("%Y-%m-%d")
+        last_run_str = scraper_status.get("updated_at", "") if scraper_status else ""
+        
+        # Converti last_run in data italiana
+        if last_run_str:
+            try:
+                last_run_dt = datetime.fromisoformat(last_run_str.replace('Z', '+00:00'))
+                # Se non ha timezone, assumiamo UTC
+                if last_run_dt.tzinfo is None:
+                    last_run_dt = pytz.UTC.localize(last_run_dt)
+                last_run_italy = last_run_dt.astimezone(italy_tz)
+                last_run_date = last_run_italy.strftime("%Y-%m-%d")
+            except:
+                last_run_date = last_run_str[:10] if len(last_run_str) >= 10 else ""
+        else:
+            last_run_date = ""
+        
+        today_date = datetime.now(italy_tz).strftime("%Y-%m-%d")
+        
+        print(f"📅 [Startup] Verifica dati cinema: Last run={last_run_date}, Oggi (IT)={today_date}")
         
         if last_run_date != today_date:
             print(f"⚠️ [Startup] Dati cinema vecchi (Last: '{last_run_date}' vs Today: '{today_date}').")
@@ -292,14 +337,16 @@ async def startup_event():
             # Prepara lista film
             movies = []
             for _, row in df.iterrows():
+                rating_val = int(row['Rating'])
+                if rating_val == 0: rating_val = 1  # Rating minimo 1 stella
                 movie = {
                     "user_id": user_id,
                     "name": row['Name'],
                     "year": int(row['Year']) if pd.notna(row.get('Year')) else None,
-                    "rating": int(row['Rating']),
+                    "rating": rating_val,
                     "date": str(row.get('Date', '')) if pd.notna(row.get('Date')) else None,
                     "letterboxd_uri": row.get('Letterboxd URI', None),
-                    "added_at": datetime.utcnow().isoformat()
+                    "added_at": datetime.now(italy_tz).isoformat()
                 }
                 movies.append(movie)
             
@@ -308,15 +355,9 @@ async def startup_event():
                 movies_collection.delete_many({"user_id": user_id})
                 movies_collection.insert_many(movies)
             
-            # Calcola e salva statistiche
-            stats = calculate_stats(df, movies)
-            stats["user_id"] = user_id
-            stats["source_file"] = "ratings.csv"
-            stats_collection.update_one(
-                {"user_id": user_id},
-                {"$set": stats},
-                upsert=True
-            )
+            # Pubblica eventi su Kafka per far calcolare le statistiche a Spark
+            kafka_producer = get_kafka_producer()
+            kafka_producer.send_batch_event("BULK_IMPORT", user_id, movies)
             
             # Aggiorna utente
             users_collection.update_one(
@@ -324,7 +365,7 @@ async def startup_event():
                 {"$set": {"has_data": True, "movies_count": len(movies)}}
             )
             
-            print(f"✅ Caricati {len(movies)} film per {user_id}")
+            print(f"✅ Caricati {len(movies)} film per {user_id}. Stats verranno calcolate da Spark.")
         except Exception as e:
             print(f"❌ Errore caricamento CSV: {e}")
     elif existing_stats:
@@ -333,328 +374,8 @@ async def startup_event():
         print(f"⚠️ File CSV non trovato: {csv_path}")
 
 # ============================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS  
 # ============================================
-def calculate_stats(df: pd.DataFrame, movies: list) -> dict:
-    """Calcola le statistiche dai dati."""
-    rating_distribution = df['Rating'].value_counts().to_dict()
-    # MongoDB richiede chiavi stringa
-    rating_distribution = {str(int(k)): int(v) for k, v in rating_distribution.items()}
-    
-    # Distribuzione rating per grafico a barre
-    rating_chart_data = [
-        {"rating": "⭐1", "count": int(df[df['Rating'] == 1].shape[0]), "stars": 1},
-        {"rating": "⭐2", "count": int(df[df['Rating'] == 2].shape[0]), "stars": 2},
-        {"rating": "⭐3", "count": int(df[df['Rating'] == 3].shape[0]), "stars": 3},
-        {"rating": "⭐4", "count": int(df[df['Rating'] == 4].shape[0]), "stars": 4},
-        {"rating": "⭐5", "count": int(df[df['Rating'] == 5].shape[0]), "stars": 5},
-    ]
-    
-    # Campi estesi per top_rated e recent (per mostrare descrizioni/poster nella dashboard)
-    extended_cols = ['Name', 'Year', 'Rating', 'poster_url', 'description', 'director', 'actors', 'duration', 'imdb_id', 'genres']
-    existing_cols = [c for c in extended_cols if c in df.columns]
-    
-    top_rated = df[df['Rating'] >= 4].nlargest(10, 'Rating')[existing_cols].to_dict('records')
-    
-    months = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
-    if 'Date' in df.columns:
-        df_copy = df.copy()
-        df_copy['DateParsed'] = pd.to_datetime(df_copy['Date'], errors='coerce')
-        df_copy['Month'] = df_copy['DateParsed'].dt.month
-        monthly_counts = df_copy.groupby('Month').size().to_dict()
-        monthly_data = [{"month": months[i], "films": int(monthly_counts.get(i+1, 0))} for i in range(12)]
-        
-        # Campi per recent
-        recent_cols = ['Name', 'Year', 'Rating', 'Date'] + [c for c in ['poster_url', 'description', 'director', 'actors', 'duration', 'imdb_id', 'genres'] if c in df_copy.columns]
-        recent = df_copy.nlargest(10, 'DateParsed')[recent_cols].to_dict('records')
-    else:
-        monthly_data = [{"month": m, "films": 0} for m in months]
-        recent = df.head(10)[existing_cols].to_dict('records')
-    
-    # Calcola tutte le statistiche avanzate dal catalogo
-    advanced_stats = calculate_advanced_stats(movies)
-    
-    return {
-        "total_watched": len(movies),
-        "avg_rating": round(float(df['Rating'].mean()), 2),
-        "rating_distribution": rating_distribution,
-        "rating_chart_data": rating_chart_data,
-        "top_rated_movies": top_rated,
-        "recent_movies": recent,
-        "monthly_data": monthly_data,
-        "genre_data": advanced_stats["genre_data"],
-        "favorite_genre": advanced_stats["favorite_genre"],
-        "total_5_stars": int(df[df['Rating'] == 5].shape[0]),
-        "total_4_stars": int(df[df['Rating'] == 4].shape[0]),
-        "total_3_stars": int(df[df['Rating'] == 3].shape[0]),
-        "total_2_stars": int(df[df['Rating'] == 2].shape[0]),
-        "total_1_stars": int(df[df['Rating'] == 1].shape[0]),
-        # Nuove statistiche
-        "watch_time_hours": advanced_stats["total_watch_time_hours"],
-        "watch_time_minutes": advanced_stats["total_watch_time_minutes"],
-        "avg_duration": advanced_stats["avg_duration"],
-        "top_directors": advanced_stats["top_directors"],
-        "top_actors": advanced_stats["top_actors"],
-        "rating_vs_imdb": advanced_stats["rating_vs_imdb"],
-        "total_unique_directors": advanced_stats.get("total_unique_directors", 0),
-        "total_unique_actors": advanced_stats.get("total_unique_actors", 0),
-        "updated_at": datetime.utcnow().isoformat(),
-        "top_years": calculate_top_years(movies)
-    }
-
-
-def calculate_advanced_stats(movies: list) -> dict:
-    """
-    Calcola statistiche avanzate dai film dell'utente con JOIN al catalogo.
-    Include: generi, durata, registi, attori, confronto IMDb.
-    """
-    from collections import Counter, defaultdict
-    
-    # Colori per i generi (Supporto sia Inglese che Italiano per TMDB)
-    genre_colors = {
-        # English keys
-        "Drama": "#E50914", "Comedy": "#FF6B35", "Action": "#00529B",
-        "Thriller": "#8B5CF6", "Horror": "#6B21A8", "Romance": "#EC4899",
-        "Sci-Fi": "#06B6D4", "Adventure": "#10B981", "Crime": "#F59E0B",
-        "Mystery": "#7C3AED", "Fantasy": "#8B5CF6", "Animation": "#F472B6",
-        "Documentary": "#22C55E", "Family": "#FBBF24", "War": "#78716C",
-        "History": "#A78BFA", "Music": "#FB7185", "Western": "#D97706",
-        "Sport": "#34D399", "Biography": "#60A5FA", "Musical": "#DB2777",
-        "TV Movie": "#94A3B8",
-        # Italian keys (per chi scarica dati da TMDB in italiano)
-        "Dramma": "#E50914", "Commedia": "#FF6B35", "Azione": "#00529B",
-        "Fantascienza": "#06B6D4", "Avventura": "#10B981", "Crimine": "#F59E0B",
-        "Mistero": "#7C3AED", "Fantastico": "#8B5CF6", "Fantasy": "#8B5CF6",
-        "Animazione": "#F472B6", "Documentario": "#22C55E", "Famiglia": "#FBBF24",
-        "Guerra": "#78716C", "Storia": "#A78BFA", "Musica": "#FB7185",
-        "Biografico": "#60A5FA", "Biografia": "#60A5FA", "Film TV": "#94A3B8"
-    }
-    default_color = "#9CA3AF"
-    
-    # Raccoglie tutti i titoli normalizzati per batch lookup
-    normalized_titles = set()
-    for m in movies:
-        if m.get('name'):
-            normalized_titles.add(normalize_title(m['name']))
-    
-    if not normalized_titles:
-        return {
-            "genre_data": [], "favorite_genre": "Nessuno",
-            "total_watch_time_hours": 0, "total_watch_time_minutes": 0,
-            "avg_duration": 0, "top_directors": [], "top_actors": [],
-            "rating_vs_imdb": []
-        }
-    
-    # Batch lookup nel catalogo usando normalized_title
-    catalog_movies = list(movies_catalog.find(
-        {
-            "$or": [
-                {"normalized_title": {"$in": list(normalized_titles)}},
-                {"normalized_original_title": {"$in": list(normalized_titles)}}
-            ]
-        },
-        {"title": 1, "original_title": 1, "normalized_title": 1, "normalized_original_title": 1, 
-         "genres": 1, "duration": 1, "director": 1, "actors": 1, "avg_vote": 1, "year": 1}
-    ))
-    
-    # Crea mapping normalized_title -> LISTA dati catalogo (per gestire duplicati)
-    title_data = defaultdict(list)
-    for cm in catalog_movies:
-        if cm.get('normalized_title'):
-            title_data[cm['normalized_title']].append(cm)
-        if cm.get('normalized_original_title'):
-             title_data[cm['normalized_original_title']].append(cm)
-    
-    # Inizializza contatori
-    genre_counter = Counter()
-    director_counter = Counter()
-    director_ratings = defaultdict(list)
-    actor_counter = Counter()
-    actor_ratings = defaultdict(list)
-    total_duration = 0
-    duration_count = 0
-    rating_vs_imdb = []
-    
-    # Processa ogni film dell'utente
-    for movie in movies:
-        title = movie.get('name', '')
-        year = movie.get('year')
-        norm_title = normalize_title(title)
-        user_rating = movie.get('rating', 0)
-        
-        candidates = title_data.get(norm_title, [])
-        catalog_info = {}
-        
-        if candidates:
-            if len(candidates) == 1:
-                catalog_info = candidates[0]
-            else:
-                # Euristiche per scegliere il candidato migliore se ce ne sono più di uno
-                # Ordiniamo i candidati per qualità:
-                # 1. Lunghezza stringa attori (più attori = dati più completi)
-                # 2. Presenza regista
-                candidates.sort(
-                    key=lambda x: (len(x.get('actors', '')) if x.get('actors') else 0, 1 if x.get('director') else 0), 
-                    reverse=True
-                )
-                
-                # 1. Matching anno esatto
-                if year:
-                    for cand in candidates:
-                        if cand.get('year') == year:
-                            catalog_info = cand
-                            break
-                    
-                    # 2. Matching anno +- 1
-                    if not catalog_info:
-                        for cand in candidates:
-                            c_year = cand.get('year')
-                            if c_year and isinstance(c_year, int) and abs(c_year - year) <= 1:
-                                catalog_info = cand
-                                break
-                
-                # 3. Fallback: primo della lista (già ordinato per qualità)
-                if not catalog_info:
-                    catalog_info = candidates[0]
-        
-        # Generi
-        for genre in catalog_info.get('genres', []):
-            if genre:
-                genre_counter[genre] += 1
-        
-        # Durata
-        duration = catalog_info.get('duration')
-        if duration and isinstance(duration, (int, float)) and duration > 0:
-            total_duration += duration
-            duration_count += 1
-        
-        # Registi
-        director = catalog_info.get('director')
-        if director:
-            # Alcuni film hanno più registi separati da virgola
-            for d in director.split(','):
-                d = d.strip()
-                if d:
-                    director_counter[d] += 1
-                    director_ratings[d].append(user_rating)
-        
-        # Attori (senza limiti per includere tutto il cast)
-        actors = catalog_info.get('actors', '')
-        if actors:
-            # Splitting robusto (virgola o altri separatori comuni se ci sono sporcizie)
-            actor_list = [a.strip() for a in actors.split(',') if a.strip()]
-            for actor in actor_list:
-                actor_counter[actor] += 1
-                actor_ratings[actor].append(user_rating)
-        
-        # Rating vs IMDb
-        imdb_rating = catalog_info.get('avg_vote')
-        if imdb_rating and user_rating:
-            # Converti rating utente (1-5) in scala 1-10 per confronto
-            user_rating_10 = user_rating * 2
-            rating_vs_imdb.append({
-                "title": movie.get('name', ''),
-                "user_rating": user_rating,
-                "user_rating_10": user_rating_10,
-                "imdb_rating": round(imdb_rating, 1),
-                "difference": round(user_rating_10 - imdb_rating, 1)
-            })
-    
-    # Calcola statistiche generi
-    total_genres = sum(genre_counter.values()) or 1
-    top_genres = genre_counter.most_common(8)
-    genre_data = []
-    for genre, count in top_genres:
-        percentage = round((count / total_genres) * 100, 1)
-        color = genre_colors.get(genre, default_color)
-        genre_data.append({"name": genre, "value": percentage, "color": color, "count": count})
-    
-    favorite_genre = top_genres[0][0] if top_genres else "Nessuno"
-    
-    # Calcola statistiche registi
-    total_unique_directors = len(director_counter)
-    top_directors = []
-    for director, count in director_counter.most_common(10):  # Aumentiamo a 10 per sicurezza
-        ratings = director_ratings[director]
-        avg_rating = round(sum(ratings) / len(ratings), 1) if ratings else 0
-        top_directors.append({
-            "name": director,
-            "count": count,
-            "avg_rating": avg_rating
-        })
-    
-    # Calcola statistiche attori
-    total_unique_actors = len(actor_counter)
-    top_actors = []
-    for actor, count in actor_counter.most_common(15):
-        ratings = actor_ratings[actor]
-        avg_rating = round(sum(ratings) / len(ratings), 1) if ratings else 0
-        top_actors.append({
-            "name": actor,
-            "count": count,
-            "avg_rating": avg_rating
-        })
-    
-    # Classifica per miglior rating (minimo 2 film se possibile, altrimenti 1)
-    best_rated_directors = []
-    # Prendiamo tutti i registi con almeno 1 film e calcoliamo avg
-    all_directors_stats = []
-    for d, count in director_counter.items():
-        ratings = director_ratings[d]
-        avg = sum(ratings) / len(ratings)
-        all_directors_stats.append({"name": d, "count": count, "avg_rating": round(avg, 2)})
-    
-    # Ordina per rating desc, poi count desc
-    best_rated_directors = sorted(
-        [d for d in all_directors_stats if d['count'] >= 1], 
-        key=lambda x: (x['avg_rating'], x['count']), 
-        reverse=True
-    )[:80] # Aumentato ulteriormente per permettere filtraggio esteso in frontend
-
-    best_rated_actors = []
-    all_actors_stats = []
-    for a, count in actor_counter.items():
-        ratings = actor_ratings[a]
-        avg = sum(ratings) / len(ratings)
-        all_actors_stats.append({"name": a, "count": count, "avg_rating": round(avg, 2)})
-    
-    best_rated_actors = sorted(
-        [a for a in all_actors_stats if a['count'] >= 1], 
-        key=lambda x: (x['avg_rating'], x['count']), 
-        reverse=True
-    )[:80] # Aumentato ulteriormente per permettere filtraggio esteso in frontend
-
-    # Calcola durate
-    avg_duration = round(total_duration / duration_count) if duration_count > 0 else 0
-    total_hours = total_duration // 60
-    total_minutes = total_duration % 60
-    
-    # Ordina rating_vs_imdb per differenza (più controversi)
-    rating_vs_imdb.sort(key=lambda x: abs(x['difference']), reverse=True)
-    
-    return {
-        "genre_data": genre_data,
-        "favorite_genre": favorite_genre,
-        "total_watch_time_hours": total_hours,
-        "total_watch_time_minutes": total_minutes,
-        "avg_duration": avg_duration,
-        "top_directors": top_directors,
-        "top_actors": top_actors,
-        "best_rated_directors": best_rated_directors,
-        "best_rated_actors": best_rated_actors,
-        "rating_vs_imdb": rating_vs_imdb[:20],  # Top 20 più controversi
-        "total_unique_directors": total_unique_directors,
-        "total_unique_actors": total_unique_actors
-    }
-
-
-def calculate_top_years(movies: list) -> list:
-    """Calcola i 5 anni con più film visti."""
-    from collections import Counter
-    years = [m['year'] for m in movies if m.get('year')]
-    year_counts = Counter(years)
-    top_5 = year_counts.most_common(5)
-    return [{"year": year, "count": count} for year, count in top_5]
 
 # ============================================
 # AUTH ENDPOINTS
@@ -698,7 +419,7 @@ async def register(user: UserRegister):
         "city": user.city,
         "province": user.province.lower() if user.province else None,
         "region": user.region,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(italy_tz).isoformat(),
         "is_active": True,
         "has_data": False,
         "movies_count": 0
@@ -771,7 +492,7 @@ async def login(user: UserAuth):
     # Aggiorna last login
     users_collection.update_one(
         {"user_id": db_user["user_id"]},
-        {"$set": {"last_login": datetime.utcnow().isoformat()}}
+        {"$set": {"last_login": datetime.now(italy_tz).isoformat()}}
     )
     
     access_token = create_access_token(data={"sub": db_user["user_id"]})
@@ -819,7 +540,7 @@ async def update_avatar(file: UploadFile = File(None), avatar_url: str = None, c
     
     users_collection.update_one(
         {"user_id": current_user_id},
-        {"$set": {"avatar": avatar_value, "avatar_updated_at": datetime.utcnow().isoformat()}}
+        {"$set": {"avatar": avatar_value, "avatar_updated_at": datetime.now(italy_tz).isoformat()}}
     )
     
     return {"status": "success", "avatar": avatar_value}
@@ -857,7 +578,7 @@ async def get_cinema_dates(current_user_id: str = Depends(get_current_user_id)):
         user_province = "napoli"
     user_province = user_province.lower()
     
-    today = datetime.now().date().isoformat()
+    today = datetime.now(italy_tz).date().isoformat()
     
     # Schema: regions.<province>.dates.<date>.cinemas.<cinema>
     region_key = f"regions.{user_province}"
@@ -908,7 +629,7 @@ async def get_cinema_films(
         try:
             # Parse the ISO date string
             last_update_date = datetime.fromisoformat(last_update_str.replace("Z", "+00:00"))
-            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            today = datetime.now(italy_tz).replace(hour=0, minute=0, second=0, microsecond=0)
             
             # Check if scraper is already running
             scraper_status = scraper_progress_collection.find_one({"_id": "cinema_scraper"})
@@ -951,7 +672,7 @@ async def get_cinema_films(
         
         background_tasks.add_task(refresh_cinema_data)
         is_refreshing = True
-        last_update_str = datetime.now().isoformat()
+        last_update_str = datetime.now(italy_tz).isoformat()
     
     def find_in_catalog(title: str, original_title: str = None) -> dict:
         """Cerca un film nel catalogo con logica robusta usando i campi indicizzati."""
@@ -1028,7 +749,7 @@ async def get_cinema_films(
     watched_titles = {normalize_title(m['name']) for m in user_watched}
     
     # Determina la data selezionata
-    selected_date = date if date else datetime.now().strftime("%Y-%m-%d")
+    selected_date = date if date else datetime.now(italy_tz).strftime("%Y-%m-%d")
     
     # Schema: regions.<province>.dates.<date>.cinemas.<cinema>.showtimes
     region_key = f"regions.{user_province}"
@@ -1157,7 +878,7 @@ async def get_cinema_films(
             "description": catalog_info.get("description") if catalog_info else "Trama non disponibile per questo film in programmazione.",
             "rating": catalog_info.get("avg_vote") if (catalog_info and catalog_info.get("avg_vote")) else None,
             "genres": catalog_info.get("genres", []) if catalog_info else ["In Sala"],
-            "year": catalog_info.get("year") if catalog_info else datetime.now().year,
+            "year": catalog_info.get("year") if catalog_info else datetime.now(italy_tz).year,
             "duration": catalog_info.get("duration") if catalog_info else None,
             "actors": catalog_info.get("actors") if catalog_info else None,
             "cinemas": formatted_cinemas,
@@ -1263,40 +984,15 @@ def process_missing_movies_background(titles_years: list, user_id: str):
                 
     print(f"✅ [Background] Aggiunti {added_count} nuovi film al catalogo.")
     
-    # 2. Ricalcola le statistiche se sono stati aggiunti film
-    # O anche se non ne sono stati aggiunti, per sicurezza (se il primo calcolo era parziale)
+    # 2. Triggera ricalcolo statistiche via Kafka/Spark se sono stati aggiunti film
     if added_count > 0:
-        print("🔄 [Background] Ricalcolo statistiche utente...")
+        print("🔄 [Background] Triggering ricalcolo statistiche via Kafka/Spark...")
         movies = list(movies_collection.find({"user_id": user_id}))
         if movies:
-            # Ricostruisci il dataframe (approssimativo dai dati salvati)
-            # Nota: qui perdiamo alcune info originali del CSV se non salvate in movie, 
-            # ma movie object ha 'rating', 'year', 'name' che bastano per le stats di base.
-            # Per stats temporali servirebbe la 'date' originale se salvata.
-            
-            # Creiamo un DF minimale
-            data_for_df = []
-            for m in movies:
-                data_for_df.append({
-                    "Name": m["name"],
-                    "Year": m["year"],
-                    "Rating": m["rating"],
-                    "Date": m.get("date")
-                })
-            
-            df = pd.DataFrame(data_for_df)
-            
-            # Ricalcola
-            stats = calculate_stats(df, movies)
-            stats["user_id"] = user_id
-            stats["last_background_update"] = datetime.utcnow().isoformat()
-            
-            stats_collection.update_one(
-                {"user_id": user_id},
-                {"$set": stats},
-                upsert=True
-            )
-            print("✅ [Background] Statistiche aggiornate.")
+            # Pubblica evento su Kafka per far ricalcolare le statistiche a Spark
+            kafka_producer = get_kafka_producer()
+            kafka_producer.send_batch_event("RECALCULATE", user_id, movies)
+            print("✅ [Background] Evento inviato a Spark per ricalcolo statistiche.")
 
 
 @app.post("/upload-csv")
@@ -1327,14 +1023,16 @@ async def upload_csv(
     # Prepara lista film
     movies = []
     for _, row in df.iterrows():
+        rating_val = int(row['Rating'])
+        if rating_val == 0: rating_val = 1  # Rating minimo 1 stella
         movie = {
             "user_id": current_user_id,
             "name": row['Name'],
             "year": int(row['Year']) if pd.notna(row.get('Year')) else None,
-            "rating": int(row['Rating']),
+            "rating": rating_val,
             "date": str(row.get('Date', '')) if pd.notna(row.get('Date')) else None,
             "letterboxd_uri": row.get('Letterboxd URI', None),
-            "added_at": datetime.utcnow().isoformat()
+            "added_at": datetime.now(italy_tz).isoformat()
         }
         movies.append(movie)
     
@@ -1363,7 +1061,7 @@ async def upload_csv(
                 "title": row['Name'],
                 "year": int(row['Year']) if pd.notna(row.get('Year')) else None,
                 "normalized_title": normalize_title(row['Name']),
-                "loaded_at": datetime.utcnow().isoformat(),
+                "loaded_at": datetime.now(italy_tz).isoformat(),
                 "source": "csv_upload_enriched"
             }
             
@@ -1405,15 +1103,9 @@ async def upload_csv(
     if catalog_updates > 0:
         print(f"📊 Aggiornati {catalog_updates} film nel catalogo dai metadati del CSV.")
 
-    # Calcola e salva statistiche iniziali (con quello che c'è)
-    stats = calculate_stats(df, movies)
-    stats["user_id"] = current_user_id
-    stats["source_file"] = file.filename
-    stats_collection.update_one(
-        {"user_id": current_user_id},
-        {"$set": stats},
-        upsert=True
-    )
+    # Pubblica batch di eventi su Kafka per Spark (invece di calculate_stats legacy)
+    kafka_producer = get_kafka_producer()
+    batch_published = kafka_producer.send_batch_event("BULK_IMPORT", current_user_id, movies)
     
     # Aggiorna utente
     users_collection.update_one(
@@ -1421,7 +1113,7 @@ async def upload_csv(
         {"$set": {
             "has_data": True,
             "movies_count": len(movies),
-            "data_updated_at": datetime.utcnow().isoformat()
+            "data_updated_at": datetime.now(italy_tz).isoformat()
         }}
     )
     
@@ -1433,101 +1125,96 @@ async def upload_csv(
         "status": "success",
         "filename": file.filename,
         "count": len(movies),
-        "stats": stats,
-        "message": f"Caricati {len(movies)} film. Ricerca copertine avviata in background."
+        "kafka_published": batch_published,
+        "message": f"Caricati {len(movies)} film. Statistiche in elaborazione da Spark (30s circa)."
     }
 
 
 @app.post("/recalculate-stats")
 async def recalculate_stats(current_user_id: str = Depends(get_current_user_id)):
-    """Ricalcola le statistiche dell'utente basandosi sul catalogo per i generi."""
+    """Triggera ricalcolo statistiche via Spark (pubblica evento su Kafka)."""
     movies = list(movies_collection.find({"user_id": current_user_id}))
     
     if not movies:
         raise HTTPException(status_code=404, detail="Nessun film trovato")
     
-    # Crea DataFrame per le stats
-    df = pd.DataFrame(movies)
-    df = df.rename(columns={"name": "Name", "year": "Year", "rating": "Rating", "date": "Date"})
+    # Pubblica batch su Kafka per far ricalcolare Spark
+    kafka_producer = get_kafka_producer()
+    batch_published = kafka_producer.send_batch_event("RECALCULATE", current_user_id, movies)
     
-    # Ricalcola le statistiche con i generi reali
-    stats = calculate_stats(df, movies)
-    stats["user_id"] = current_user_id
-    
-    # Aggiorna nel database
-    stats_collection.update_one(
-        {"user_id": current_user_id},
-        {"$set": stats},
-        upsert=True
-    )
-    
-    return {"message": "Statistiche ricalcolate con successo!", "stats": stats}
+    return {
+        "message": "Ricalcolo statistiche avviato via Spark",
+        "kafka_published": batch_published,
+        "movies_count": len(movies),
+        "info": "Le statistiche saranno disponibili entro 30 secondi"
+    }
 
 
 @app.get("/user-stats")
 async def get_user_stats(current_user_id: str = Depends(get_current_user_id)):
-    """Ottiene le statistiche dell'utente (sempre sincronizzate col DB)."""
+    """
+    Ottiene le statistiche dell'utente.
+    Legge direttamente da user_stats (aggiornato da Spark).
+    Se stats non presenti ma ci sono film, ritorna stato 'processing'.
+    """
+    # 1. Leggi stats da DB (ora unica source of truth)
     stats = stats_collection.find_one({"user_id": current_user_id}, {"_id": 0})
     
     if not stats:
+        # 2. Controlla se l'utente ha film - se sì, stats in elaborazione
+        movie_count = movies_collection.count_documents({"user_id": current_user_id})
+        if movie_count > 0:
+            return {
+                "status": "processing",
+                "message": "Statistiche in elaborazione, riprova tra qualche secondo...",
+                "total_watched": movie_count,
+                "avg_rating": 0,
+                "rating_chart_data": [],
+                "genre_data": [],
+                "source": "pending"
+            }
         raise HTTPException(status_code=404, detail="Nessun dato trovato. Carica prima un file CSV.")
     
-    # Calcola il conteggio REALE dei film ogni volta per evitare discrepanze con la navbar/catalogo
+    # 3. Calcola il conteggio REALE dei film (per sicurezza sync immediato)
     real_count = movies_collection.count_documents({"user_id": current_user_id})
     stats["total_watched"] = real_count
     
-    # Assicura che i campi quiz siano presenti (default 0)
-    stats["quiz_correct_count"] = stats.get("quiz_correct_count", 0)
-    stats["quiz_wrong_count"] = stats.get("quiz_wrong_count", 0)
-    stats["quiz_total_attempts"] = stats.get("quiz_total_attempts", 0)
-    stats["last_quiz_date"] = stats.get("last_quiz_date", None)
-    
-    # Se mancano le nuove statistiche o sono incomplete (es. meno di 40 per i best_rated), ricalcola tutto
-    needs_recalc = False
-    
-    # Controllo versione statistiche
-    if stats.get("stats_version", "") != "2.2":
-        needs_recalc = True
+    # 4. Sync Status Check
+    sync_status = "synced"
+    user = users_collection.find_one({"user_id": current_user_id}, {"last_interaction": 1})
+    if user and user.get("last_interaction"):
+        last_interaction = user.get("last_interaction")
+        stats_updated = stats.get("updated_at")
         
-    if "best_rated_directors" not in stats or "best_rated_actors" not in stats:
-        needs_recalc = True
-    elif len(stats.get("best_rated_directors", [])) < 30: # Forza ricalcolo se abbiamo ancora le vecchie stats "corte"
-        needs_recalc = True
-    elif "genre_data" in stats and stats["genre_data"] and ("count" not in stats["genre_data"][0] or "color" not in stats["genre_data"][0]):
-        needs_recalc = True
+        # Se l'interazione è più recente dell'aggiornamento stats -> Syncing
+        if not stats_updated or last_interaction > stats_updated:
+            sync_status = "syncing"
     
-    if needs_recalc:
-        movies = list(movies_collection.find({"user_id": current_user_id}))
-        advanced_stats = calculate_advanced_stats(movies)
+    stats["sync_status"] = sync_status
+    
+    # 5. Assicura campi quiz (preservati da $set)
+    stats.setdefault("quiz_correct_count", 0)
+    stats.setdefault("quiz_wrong_count", 0)
+    stats.setdefault("quiz_total_attempts", 0)
+    stats.setdefault("last_quiz_date", None)
+
+    return mongo_to_dict(stats)
+
+
+@app.get("/trends/global")
+async def get_global_trends():
+    """Restituisce i trend globali calcolati da Spark."""
+    trends = db.global_stats.find_one({"type": "global_trends"}, {"_id": 0})
+    
+    if not trends:
+        # Fallback se Spark non ha ancora calcolato
+        return {
+            "top_movies": [],
+            "trending_genres": [],
+            "message": "Trend in elaborazione..."
+        }
         
-        # Aggiorna le stats con i nuovi dati
-        stats.update({
-            "stats_version": "2.2", # Aggiorna versione
-            "genre_data": advanced_stats["genre_data"],
-            "favorite_genre": advanced_stats["favorite_genre"],
-            "watch_time_hours": advanced_stats["total_watch_time_hours"],
-            "watch_time_minutes": advanced_stats["total_watch_time_minutes"],
-            "avg_duration": advanced_stats["avg_duration"],
-            "top_directors": advanced_stats["top_directors"],
-            "top_actors": advanced_stats["top_actors"],
-            "best_rated_directors": advanced_stats.get("best_rated_directors", []),
-            "best_rated_actors": advanced_stats.get("best_rated_actors", []),
-            "rating_vs_imdb": advanced_stats["rating_vs_imdb"],
-            "total_unique_directors": advanced_stats.get("total_unique_directors", 0),
-            "total_unique_actors": advanced_stats.get("total_unique_actors", 0)
-        })
-        
-        # Salva nel database
-        stats_collection.update_one(
-            {"user_id": current_user_id},
-            {"$set": stats}
-        )
-    
-    if "top_years" not in stats:
-        movies = list(movies_collection.find({"user_id": current_user_id}))
-        stats["top_years"] = calculate_top_years(movies)
-    
-    return stats
+    return mongo_to_dict(trends)
 
 @app.get("/movies")
 async def get_movies(current_user_id: str = Depends(get_current_user_id)):
@@ -1626,49 +1313,46 @@ async def get_movies_by_person(name: str, type: str, current_user_id: str = Depe
 
 @app.get("/monthly-stats/{year}")
 async def get_monthly_stats(year: int, current_user_id: str = Depends(get_current_user_id)):
-    """Ottiene le statistiche mensili per un anno specifico (basato sulla data di visione)."""
-    movies = list(movies_collection.find(
-        {"user_id": current_user_id},
-        {"_id": 0, "user_id": 0}
-    ))
+    """
+    Ottiene le statistiche mensili per un anno specifico.
+    Ora legge da year_data nelle user_stats (calcolato da Spark).
+    """
+    # 1. Leggi stats da DB
+    stats = stats_collection.find_one({"user_id": current_user_id}, {"_id": 0})
     
-    months = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
-    monthly_counts = {i: 0 for i in range(1, 13)}
-    films_in_year = 0
+    if not stats:
+        # Fallback: nessuna stats, restituisci dati vuoti
+        months = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
+        return {
+            "year": year,
+            "monthly_data": [{"month": m, "films": 0} for m in months],
+            "total_films": 0,
+            "available_years": []
+        }
     
-    for movie in movies:
-        if movie.get('date'):
-            try:
-                # Parsing data nel formato YYYY-MM-DD
-                date_str = str(movie['date'])
-                movie_year = int(date_str.split('-')[0])
-                movie_month = int(date_str.split('-')[1])
-                
-                if movie_year == year:
-                    monthly_counts[movie_month] += 1
-                    films_in_year += 1
-            except (ValueError, IndexError):
-                continue
+    # 2. Cerca l'anno richiesto in year_data
+    year_data = stats.get("year_data", [])
+    available_years = stats.get("available_years", [])
     
-    monthly_data = [{"month": months[i], "films": monthly_counts[i+1]} for i in range(12)]
+    # Trova i dati per l'anno richiesto
+    year_entry = next((y for y in year_data if y.get("year") == year), None)
     
-    # Trova gli anni disponibili (in cui l'utente ha visto film)
-    available_years = set()
-    for movie in movies:
-        if movie.get('date'):
-            try:
-                date_str = str(movie['date'])
-                movie_year = int(date_str.split('-')[0])
-                available_years.add(movie_year)
-            except (ValueError, IndexError):
-                continue
-    
-    return {
-        "year": year,
-        "monthly_data": monthly_data,
-        "total_films": films_in_year,
-        "available_years": sorted(list(available_years), reverse=True)
-    }
+    if year_entry:
+        return {
+            "year": year,
+            "monthly_data": year_entry.get("monthly_data", []),
+            "total_films": year_entry.get("total_films", 0),
+            "available_years": available_years
+        }
+    else:
+        # Anno non trovato, restituisci dati vuoti
+        months = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
+        return {
+            "year": year,
+            "monthly_data": [{"month": m, "films": 0} for m in months],
+            "total_films": 0,
+            "available_years": available_years
+        }
 
 
 
@@ -1786,7 +1470,7 @@ def fetch_metadata_from_tmdb(title: str, year: Optional[int]) -> Optional[dict]:
                     "link_imdb": f"https://www.imdb.com/title/{details.get('imdb_id')}/" if details.get("imdb_id") else None,
                     "poster_url": poster_url,
                     "has_real_poster": bool(poster_path),
-                    "loaded_at": datetime.utcnow().isoformat(),
+                    "loaded_at": datetime.now(italy_tz).isoformat(),
                     "source": "tmdb_enriched_fetch"
                 }
                 
@@ -1969,37 +1653,53 @@ async def add_movie_to_collection(
     
     if existing:
         # Se esiste, aggiorna commento e rating
+        rating_val = movie.rating if movie.rating and movie.rating > 0 else 1  # Rating minimo 1 stella
         movies_collection.update_one(
             {"_id": existing["_id"]},
             {"$set": {
-                "rating": movie.rating,
+                "rating": rating_val,
                 "comment": movie.comment,
-                "updated_at": datetime.utcnow().isoformat()
+                "updated_at": datetime.now(italy_tz).isoformat()
             }}
         )
         
-        # Ricalcola le statistiche e aggiorna conteggi
-        await recalculate_user_stats(current_user_id)
+        # Evento Kafka per stats update
+        kafka_producer = get_kafka_producer()
+        kafka_producer.send_movie_event("UPDATE", current_user_id, {"name": movie.name, "year": movie.year, "rating": movie.rating})
         
         return {"status": "success", "message": "Film aggiornato"}
     
     # Crea documento film
+    rating_val = movie.rating if movie.rating and movie.rating > 0 else 1  # Rating minimo 1 stella
     new_movie = {
         "user_id": current_user_id,
         "name": movie.name,
         "year": movie.year,
-        "rating": movie.rating,
+        "rating": rating_val,
         "comment": movie.comment,
-        "date": datetime.utcnow().strftime("%Y-%m-%d"),
+        "date": datetime.now(italy_tz).strftime("%Y-%m-%d"),
         "imdb_id": movie.imdb_id,
         "poster_url": movie.poster_url,
-        "added_at": datetime.utcnow().isoformat()
+        "added_at": datetime.now(italy_tz).isoformat()
     }
     
     movies_collection.insert_one(new_movie)
     
-    # Ricalcola le statistiche e aggiorna conteggi
-    await recalculate_user_stats(current_user_id)
+    # Pubblica evento Kafka per elaborazione Spark
+    kafka_producer = get_kafka_producer()
+    kafka_producer.send_movie_event("ADD", current_user_id, new_movie)
+    
+    # Aggiorna conteggio utente (asincrono, stats da Kafka)
+    users_collection.update_one(
+        {"user_id": current_user_id},
+        {
+            "$inc": {"movies_count": 1}, 
+            "$set": {
+                "has_data": True,
+                "last_interaction": datetime.now(italy_tz).isoformat()
+            }
+        }
+    )
     
     return {"status": "success", "message": "Film aggiunto"}
 
@@ -2011,9 +1711,10 @@ async def update_user_movie(
 ):
     """Aggiorna voto o commento di un film nei 'visti'."""
     update_data = {}
-    if req.rating is not None: update_data["rating"] = req.rating
+    if req.rating is not None:
+        update_data["rating"] = req.rating if req.rating > 0 else 1  # Rating minimo 1 stella
     if req.comment is not None: update_data["comment"] = req.comment
-    update_data["updated_at"] = datetime.utcnow().isoformat()
+    update_data["updated_at"] = datetime.now(italy_tz).isoformat()
 
     res = movies_collection.update_one(
         {"user_id": current_user_id, "name": req.name, "year": req.year},
@@ -2022,10 +1723,20 @@ async def update_user_movie(
     
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Film non trovato nei tuoi visti")
-        
-    # Ricalcola le statistiche e aggiorna conteggi
-    await recalculate_user_stats(current_user_id)
     
+    # Pubblica evento Kafka per elaborazione Spark
+    kafka_producer = get_kafka_producer()
+    kafka_producer.send_movie_event("UPDATE", current_user_id, {
+        "name": req.name, "year": req.year, "rating": req.rating
+    })
+    
+    # Aggiorna timestamp interazione per sync UI
+    users_collection.update_one(
+        {"user_id": current_user_id},
+        {"$set": {"last_interaction": datetime.now(italy_tz).isoformat()}}
+    )
+    
+    # Stats aggiornate via Kafka/Spark
     return {"status": "success"}
 
 
@@ -2044,15 +1755,22 @@ async def remove_movie_from_collection(
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Film non trovato nella collezione")
     
+    # Pubblica evento Kafka per elaborazione Spark
+    kafka_producer = get_kafka_producer()
+    kafka_producer.send_movie_event("DELETE", current_user_id, {
+        "name": movie.name, "year": movie.year
+    })
+    
     # Aggiorna conteggio utente
     users_collection.update_one(
         {"user_id": current_user_id},
-        {"$inc": {"movies_count": -1}}
+        {
+            "$inc": {"movies_count": -1},
+            "$set": {"last_interaction": datetime.now(italy_tz).isoformat()}
+        }
     )
     
-    # Ricalcola statistiche
-    await recalculate_user_stats(current_user_id)
-    
+    # Stats aggiornate via Kafka/Spark
     return {"message": "Film rimosso con successo"}
 
 
@@ -2062,21 +1780,32 @@ async def update_movie_rating(
     current_user_id: str = Depends(get_current_user_id)
 ):
     """Aggiorna il rating di un film nella collezione."""
+    rating_val = movie.rating if movie.rating and movie.rating > 0 else 1  # Rating minimo 1 stella
     result = movies_collection.update_one(
         {
             "user_id": current_user_id,
             "name": movie.name,
             "year": movie.year
         },
-        {"$set": {"rating": movie.rating}}
+        {"$set": {"rating": rating_val}}
     )
     
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Film non trovato nella collezione")
     
-    # Ricalcola statistiche
-    await recalculate_user_stats(current_user_id)
+    # Pubblica evento Kafka per elaborazione Spark
+    kafka_producer = get_kafka_producer()
+    kafka_producer.send_movie_event("UPDATE", current_user_id, {
+        "name": movie.name, "year": movie.year, "rating": movie.rating
+    })
     
+    # Aggiorna timestamp interazione per sync UI
+    users_collection.update_one(
+        {"user_id": current_user_id},
+        {"$set": {"last_interaction": datetime.now(italy_tz).isoformat()}}
+    )
+    
+    # Stats aggiornate via Kafka/Spark
     return {"message": "Rating aggiornato con successo"}
 
 
@@ -2099,33 +1828,13 @@ async def recalculate_user_stats(user_id: str):
         {"$set": {
             "movies_count": len(movies),
             "has_data": True,
-            "data_updated_at": datetime.utcnow().isoformat()
+            "data_updated_at": datetime.now(italy_tz).isoformat()
         }}
     )
     
-    # 2. Ricostruisci il DataFrame per riutilizzare calculate_stats
-    data_for_df = []
-    for m in movies:
-        data_for_df.append({
-            "Name": m["name"],
-            "Year": m["year"],
-            "Rating": m["rating"],
-            "Date": m.get("date") # Importante: recupera la data se presente
-        })
-    
-    df = pd.DataFrame(data_for_df)
-    
-    # 3. Calcola tutte le statistiche (base + avanzate)
-    stats = calculate_stats(df, movies)
-    stats["user_id"] = user_id
-    stats["last_update"] = datetime.utcnow().isoformat()
-    
-    # 4. Aggiorna statistiche
-    stats_collection.update_one(
-        {"user_id": user_id},
-        {"$set": stats},
-        upsert=True
-    )
+    # 2. Pubblica evento su Kafka per far calcolare le statistiche a Spark
+    kafka_producer = get_kafka_producer()
+    kafka_producer.send_batch_event("RECALCULATE", user_id, movies)
 
 
 @app.get("/user-history")
@@ -2162,7 +1871,7 @@ async def analyze_sentiment(title: str, current_user_id: str = Depends(get_curre
         "sentiment_score": sentiment_score,
         "sentiment_label": "positive" if sentiment_score > 0.6 else ("negative" if sentiment_score < 0.4 else "neutral"),
         "comments_analyzed": len(mock_comments),
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(italy_tz).isoformat()
     }
     
     # Salva nella cronologia
@@ -2180,7 +1889,7 @@ async def analyze_sentiment(title: str, current_user_id: str = Depends(get_curre
 async def log_activity(activity: dict, current_user_id: str = Depends(get_current_user_id)):
     """Registra un'attività dell'utente."""
     activity["user_id"] = current_user_id
-    activity["timestamp"] = datetime.utcnow().isoformat()
+    activity["timestamp"] = datetime.now(italy_tz).isoformat()
     
     activity_collection.insert_one(activity)
     
@@ -2506,17 +2215,16 @@ async def generate_quiz_questions(background_tasks: BackgroundTasks, n: int = 5)
 @app.get("/quiz/history")
 async def get_quiz_history(current_user_id: str = Depends(get_current_user_id)):
     """Ottiene la cronologia quiz dell'utente."""
-    history = list(quiz_results.find(
+    # Usa stats_collection che contiene i dati quiz dell'utente
+    user_stats = stats_collection.find_one(
         {"user_id": current_user_id},
-        {"_id": 0}
-    ).sort("date", -1).limit(20))
+        {"quiz_correct_count": 1, "quiz_wrong_count": 1, "quiz_total_attempts": 1, "last_quiz_date": 1, "_id": 0}
+    )
     
-    # Formatta le date
-    for h in history:
-        if isinstance(h.get("date"), datetime):
-            h["date"] = h["date"].isoformat()
+    if not user_stats:
+        return {"history": []}
     
-    return {"history": history}
+    return {"history": [user_stats] if user_stats.get("quiz_total_attempts") else []}
 
 
 @app.get("/quiz/stats")
@@ -2548,7 +2256,7 @@ async def submit_quiz_results(
     """
     correct = results.correct
     wrong = results.wrong
-    quiz_date = results.quiz_date or datetime.utcnow().strftime("%Y-%m-%d")
+    quiz_date = results.quiz_date or datetime.now(italy_tz).strftime("%Y-%m-%d")
     
     # Recupera le stats attuali dell'utente
     user_stats = stats_collection.find_one({"user_id": current_user_id})
