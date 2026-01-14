@@ -130,5 +130,3 @@ volumes:
   spark_checkpoints:
   kafka_data:
   spark_ivy2:
-
-

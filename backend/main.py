@@ -1252,6 +1252,38 @@ async def get_global_trends():
         
     return mongo_to_dict(trends)
 
+
+@app.get("/recommendations")
+async def get_recommendations(current_user_id: str = Depends(get_current_user_id)):
+    """
+    Get personalized movie recommendations for the user.
+    Returns 6 recommended + 3 not-recommended films based on user's taste profile.
+    """
+    from recommendation_service import get_recommendation_service
+    
+    try:
+        service = get_recommendation_service()
+        result = await run_in_threadpool(service.get_recommendations, current_user_id)
+        
+        if result.get("error"):
+            # Return empty lists with error message
+            return {
+                "recommended": [],
+                "not_recommended": [],
+                "message": result["error"],
+                "matched_films": result.get("matched_films", 0),
+                "total_films": result.get("total_films", 0)
+            }
+        
+        return result
+    except Exception as e:
+        print(f"❌ Recommendation error: {e}")
+        return {
+            "recommended": [],
+            "not_recommended": [],
+            "message": f"Error generating recommendations: {str(e)}"
+        }
+
 class MovieCreate(BaseModel):
     name: str
     year: Optional[int] = None
@@ -1811,7 +1843,8 @@ async def add_movie_to_collection(
             "$inc": {"movies_count": 1}, 
             "$set": {
                 "has_data": True,
-                "last_interaction": datetime.now(italy_tz).isoformat()
+                "last_interaction": datetime.now(italy_tz).isoformat(),
+                "data_updated_at": datetime.now(italy_tz).isoformat()  # Per invalidare cache raccomandazioni
             }
         }
     )
