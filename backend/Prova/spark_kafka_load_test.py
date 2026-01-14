@@ -1,20 +1,21 @@
-
 """
 🎬 CineMatch - Scalable Spark/Kafka Load Test (10k Users)
 =========================================================
 
-Simula un carico massiccio di 10.000 utenti concorrenti.
-Ciclo completo: Creazione -> Operazioni (Add/Update/Delete) -> Verifica -> Pulizia.
+Simula un carico massiccio di 10.000 utenti concorrenti per testare la latenza e la robustezza della pipeline.
 
-Workflow:
-1. SETUP: Creazione massiva di 10.000 utenti nel DB (bulk insert).
-2. GENERAZIONE: Creazione eventi (Add, Update, Delete) per ogni utente.
-3. ESECUZIONE: Scrittura su MongoDB (film) e invio eventi a Kafka.
-4. VERIFICA: Attesa che Spark processi i dati (conteggio stats).
-5. CLEANUP: Rimozione totale di utenti, film, stats e report.
+Architecture Flow:
+1.  **Generazione**: Lo script genera 10.000 operazioni realistiche (ADD, UPDATE, DELETE).
+2.  **Scrittura Duale**: Lo script scrive su MongoDB (collection 'movies') E invia evento a Kafka (topic 'user-movie-events').
+3.  **Elaborazione Spark**: Spark Streaming legge eventi da Kafka come trigger.
+4.  **Recupero Dati**: Spark legge i dati aggiornati da MongoDB 'movies' per l'utente.
+5.  **Calcolo**: Spark calcola statistiche complesse (trend, generi, registi preferiti).
+6.  **Persistenza**: Spark salva i risultati in MongoDB 'user_stats'.
 
-Uso:
-    python spark_kafka_load_test.py
+Fasi del Test:
+*   **FASE 1 (Setup)**: Creazione massiva di 10.000 profili utente nel DB (bulk insert). Non genera traffico Kafka, solo prepara il DB.
+*   **FASE 2 (Esecuzione)**: Il cuore del test. Genera traffico reale simulando utenti che aggiungono, votano o rimuovono film. Misura il throughput di scrittura del sistema.
+*   **FASE 3 (Verifica)**: Monitora la collection `user_stats` per vedere quanto tempo impiega Spark a processare tutto il backlog generato nella Fase 2.
 """
 
 import os
@@ -26,6 +27,7 @@ import logging
 from datetime import datetime, timedelta
 import pytz
 from pymongo import MongoClient, InsertOne, UpdateOne, DeleteOne
+from pymongo.errors import BulkWriteError
 from kafka import KafkaProducer
 
 # Setup logging
@@ -107,17 +109,28 @@ def phase_1_setup_users(num_users):
         }))
         
         if len(requests) >= BATCH_SIZE:
-            db.users.bulk_write(requests, ordered=False)
-            created_count += len(requests)
+            try:
+                db.users.bulk_write(requests, ordered=False)
+                created_count += len(requests)
+            except BulkWriteError as bwe:
+                # Ignore duplicates, count only inserted (approx)
+                logger.warning(f"   ⚠️ Bulk write warning (likely duplicates): {bwe.details.get('nInserted', 0)} inserted")
+                created_count += bwe.details.get('nInserted', 0)
             logger.info(f"   ... creati {created_count:,} utenti")
             requests = []
             
     if requests:
-        db.users.bulk_write(requests, ordered=False)
-        created_count += len(requests)
+        try:
+            db.users.bulk_write(requests, ordered=False)
+            created_count += len(requests)
+        except BulkWriteError as bwe:
+             logger.warning(f"   ⚠️ Bulk write warning (likely duplicates): {bwe.details.get('nInserted', 0)} inserted")
+             created_count += bwe.details.get('nInserted', 0)
         
     logger.info(f"✅ FASE 1 completata: {created_count:,} utenti nel DB.")
     client.close()
+    return created_count
+
 
 def phase_2_generate_and_execute(num_users, films):
     """Generates and executes operations (Mongo + Kafka)."""
@@ -246,13 +259,10 @@ def phase_3_verify(num_users):
     client = get_mongo_client()
     db = client.cinematch_db
     
-    # Target: approx num_users (some might be deleted entirely if logic removes stats on empty, but usually stats remain)
-    # Actually, if we delete the ONLY movie, stats might become empty depending on logic.
-    # PROB_DELETE is 10%. So ~9000 users should have stats.
-    
     target_min = int(num_users * 0.85) # Conservative target
     logger.info(f"   Target: almeno {target_min:,} documenti in user_stats")
     
+    count = 0
     start_wait = time.time()
     while time.time() - start_wait < 300: # 5 min timeout
         count = db.user_stats.count_documents({"user_id": {"$regex": f"^{USER_PREFIX}"}})
@@ -269,6 +279,7 @@ def phase_3_verify(num_users):
         time.sleep(5)
     
     client.close()
+    return count
 
 def phase_4_cleanup():
     """Deletes all test data."""
@@ -297,59 +308,50 @@ def phase_4_cleanup():
         
     logger.info("✅ Pulizia completata.")
 
-from pymongo.errors import BulkWriteError
 
-# ... (imports)
 
-def phase_1_setup_users(num_users):
-    """Creates N users in MongoDB using bulk writes."""
-    logger.info(f"🚀 FASE 1: Creazione {num_users:,} utenti...")
-    client = get_mongo_client()
-    db = client.cinematch_db
-    italy_tz = pytz.timezone('Europe/Rome')
-    now_iso = datetime.now(italy_tz).isoformat()
+
+
+
+
+def generate_report(stats):
+    """Generates a JSON report file with the test results."""
+    # Ensure it saves in the same directory as the script (Prova/)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    filename = os.path.join(base_dir, "spark_kafka_load_results.json")
     
-    requests = []
-    created_count = 0
-    
-    for i in range(num_users):
-        user_id = f"{USER_PREFIX}{i}"
-        requests.append(InsertOne({
-            "user_id": user_id,
-            "username": user_id,
-            "email": f"{user_id}@test.local",
-            "full_name": "Load Test User",
-            "created_at": now_iso,
-            "is_active": True,
-            "is_test": True
-        }))
-        
-        if len(requests) >= BATCH_SIZE:
-            try:
-                db.users.bulk_write(requests, ordered=False)
-                created_count += len(requests)
-            except BulkWriteError as bwe:
-                # Ignore duplicates, count only inserted (approx)
-                logger.warning(f"   ⚠️ Bulk write warning (likely duplicates): {bwe.details.get('nInserted', 0)} inserted")
-                created_count += bwe.details.get('nInserted', 0)
-            logger.info(f"   ... creati {created_count:,} utenti")
-            requests = []
-            
-    if requests:
-        try:
-            db.users.bulk_write(requests, ordered=False)
-            created_count += len(requests)
-        except BulkWriteError as bwe:
-             logger.warning(f"   ⚠️ Bulk write warning (likely duplicates): {bwe.details.get('nInserted', 0)} inserted")
-             created_count += bwe.details.get('nInserted', 0)
-        
-    logger.info(f"✅ FASE 1 completata: {created_count:,} utenti nel DB.")
-    client.close()
-
-# ...
+    logger.info(f"📝 Generazione report in {filename}...")
+    try:
+        with open(filename, "w") as f:
+            json.dump(stats, f, indent=4)
+        logger.info("✅ Report salvato.")
+    except Exception as e:
+        logger.error(f"❌ Errore salvataggio report: {e}")
 
 def main():
     logger.info(f"🎬 STARTING LOAD TEST ({NUM_USERS:,} USERS)")
+    test_start_time = time.time()
+    stats = {
+        "timestamp": datetime.now().isoformat(),
+        "config": {
+            "num_users": NUM_USERS,
+            "prob_update": PROB_UPDATE,
+            "prob_delete": PROB_DELETE
+        },
+        "architecture_flow": [
+            "1. Script genera 10.000 operazioni realistiche (ADD, UPDATE, DELETE).",
+            "2. Scrittura Duale: Script scrive su MongoDB (collection 'movies') E invia evento a Kafka (topic 'user-movie-events').",
+            "3. Spark Streaming legge eventi da Kafka come trigger.",
+            "4. Spark legge i dati aggiornati da MongoDB 'movies' per l'utente.",
+            "5. Spark calcola statistiche complesse (trend, generi, registi preferiti).",
+            "6. Spark salva i risultati in MongoDB 'user_stats'."
+        ],
+        "test_phases": [
+            "FASE 1 (Setup): Creazione massiva di 10.000 profili utente nel DB (bulk insert). Non genera traffico Kafka, solo prepara il DB.",
+            "FASE 2 (Esecuzione): Il cuore del test. Genera traffico reale simulando utenti che aggiungono, votano o rimuovono film. Misura il throughput di scrittura del sistema.",
+            "FASE 3 (Verifica): Monitora la collection 'user_stats' per vedere quanto tempo impiega Spark a processare tutto il backlog generato nella Fase 2."
+        ]
+    }
     
     try:
         # Load catalogs once
@@ -361,13 +363,37 @@ def main():
         # 0. Pre-Cleanup to ensure clean state
         phase_4_cleanup()
 
-        # Execute Phases
-        phase_1_setup_users(NUM_USERS)
+        # Execute Phase 1
+        t0 = time.time()
+        created = phase_1_setup_users(NUM_USERS)
+        stats["phase_1_setup"] = {
+            "duration_seconds": round(time.time() - t0, 2),
+            "users_created": created
+        }
 
-        
+        # Execute Phase 2
+        t0 = time.time()
         total_events = phase_2_generate_and_execute(NUM_USERS, films)
+        duration_p2 = time.time() - t0
+        stats["phase_2_execution"] = {
+            "duration_seconds": round(duration_p2, 2),
+            "total_events": total_events,
+            "events_per_second": round(total_events / duration_p2, 2) if duration_p2 > 0 else 0
+        }
         
-        phase_3_verify(NUM_USERS)
+        # Execute Phase 3
+        t0 = time.time()
+        final_count = phase_3_verify(NUM_USERS)
+        stats["phase_3_verification"] = {
+            "duration_seconds": round(time.time() - t0, 2),
+            "final_stats_count": final_count,
+            "target_met": final_count >= int(NUM_USERS * 0.85)
+        }
+        
+        stats["total_duration_seconds"] = round(time.time() - test_start_time, 2)
+        
+        # Generate Report BEFORE cleanup
+        generate_report(stats)
         
         phase_4_cleanup()
         
