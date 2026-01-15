@@ -144,6 +144,25 @@
     flex: 1;
 }
 
+.grafana-placeholder-info {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    color: #aaa;
+    border-left: 3px solid #ff9f43;
+}
+
+.grafana-placeholder-info code {
+    display: block;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 4px 8px;
+    margin: 5px 0;
+    font-family: monospace;
+    color: #ff9f43;
+}
+
 .admin-nav-item {
     display: flex;
     align-items: center;
@@ -341,4 +360,22 @@
         min-width: 100px;
         justify-content: center;
     }
+}
+
+/* Analytics Sections Spacing - ADDED */
+.analytics-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 5rem;
+    /* Molto spazio tra i grafici */
+}
+
+.analytics-section h2 {
+    color: #fff;
+    font-size: 1.6rem;
+    margin-bottom: 2.5rem;
+    /* Spazio tra titolo e grafico */
+    border-left: 5px solid #E50914;
+    padding-left: 1.5rem;
+    font-weight: 600;
 }

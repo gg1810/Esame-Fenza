@@ -121,12 +121,27 @@ export function Admin() {
                                 </div>
                             </div>
 
-                            {/* Sezione Utenti */}
+                            {/* Sezione Attività (Time Series) */}
                             <div className="analytics-section">
-                                <h2>👥 Analytics Utenti</h2>
-                                <div className="admin-placeholder">
-                                    <p>Statistiche utenti</p>
-                                    <p className="placeholder-hint">Crea un panel Grafana per gli utenti</p>
+                                <h2>📅 Attività Giornaliera (Recensioni/Voti)</h2>
+                                <div className="grafana-container">
+                                    <iframe
+                                        src="http://localhost:3001/d-solo/ad5gq57/generi?orgId=1&from=1765753200000&to=1772405999000&timezone=browser&tab=queries&panelId=panel-3&__feature.dashboardSceneSolo=true"
+                                        className="grafana-iframe"
+                                        title="Grafana - Activity"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Sezione Utenti (Pie Chart Province) */}
+                            <div className="analytics-section">
+                                <h2>👥 Utenti per Provincia</h2>
+                                <div className="grafana-container">
+                                    <iframe
+                                        src="http://localhost:3001/d-solo/ad5gq57/generi?orgId=1&panelId=2&theme=dark"
+                                        className="grafana-iframe"
+                                        title="Grafana - Users"
+                                    />
                                 </div>
                             </div>
                         </div>

@@ -2386,6 +2386,19 @@ async def get_admin_genres_stats():
     return [{"genre": g["_id"], "count": g["count"]} for g in genres]
 
 
+@app.get("/admin/stats/activity")
+async def get_admin_activity_stats():
+    """Attività giornaliera (film visti) per time series Grafana."""
+    pipeline = [
+        {"$match": {"date": {"$exists": True, "$ne": None}}},
+        {"$group": {"_id": "$date", "count": {"$sum": 1}}},
+        {"$sort": {"_id": 1}}
+    ]
+    activity = list(movies_collection.aggregate(pipeline))
+    # Grafana Infinity preferisce array di oggetti
+    return [{"date": a["_id"], "count": a["count"]} for a in activity]
+
+
 # ============================================
 # QUIZ AI ENDPOINTS
 # ============================================
