@@ -9,4 +9,5 @@ COPY . .
 
 EXPOSE 5173
 
-CMD ["npm", "run", "dev", "--", "--host"]
+# Rimuovi --host da qui, lascia che vite.config.ts lo gestisca
+CMD ["npm", "run", "dev"]

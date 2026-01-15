@@ -9,6 +9,8 @@ import { Sentiment } from './pages/Sentiment';
 import { Mood } from './pages/Mood';
 import { Predictions } from './pages/Predictions';
 import { Login, Register } from './pages/Auth';
+import { Admin } from './pages/Admin';
+import { Quiz } from './pages/Quiz';
 import './styles/global.css';
 
 // Map routes to studio themes
@@ -20,7 +22,8 @@ const routeThemes: Record<string, string> = {
   '/cinema': 'disney',
   '/sentiment': 'paramount',
   '/mood': 'lionsgate',
-  '/predictions': 'universal'
+  '/predictions': 'universal',
+  '/quiz': 'ghibli'
 };
 
 function ThemeManager({ children }: { children: React.ReactNode }) {
@@ -45,6 +48,7 @@ function App() {
     <Router>
       <ThemeManager>
         <Routes>
+          <Route path="/admin" element={<Admin />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route
@@ -63,6 +67,7 @@ function App() {
                       <Route path="/sentiment" element={<Sentiment />} />
                       <Route path="/mood" element={<Mood />} />
                       <Route path="/predictions" element={<Predictions />} />
+                      <Route path="/quiz" element={<Quiz />} />
                       <Route path="*" element={<Navigate to="/dashboard" replace />} />
                     </Routes>
                   </main>

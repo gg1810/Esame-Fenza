@@ -161,3 +161,22 @@
   --success: #00d282;
   --warning: #f9d84a;
 }
+
+/* ============================================
+   STUDIO GHIBLI THEME - Quiz
+   Brighter green borders, subtle pastel background
+   ============================================ */
+[data-theme="ghibli"] {
+  --bg-primary: #e8f5e9;
+  --bg-secondary: #c8e6c9;
+  --bg-card: #f1f8e9;
+  --accent-primary: #2e7d32;
+  --accent-secondary: #43a047;
+  --accent-glow: rgba(46, 125, 50, 0.4);
+  --text-primary: #1b5e20;
+  --text-secondary: #2e7d32;
+  --text-muted: #4caf50;
+  --border-color: #43a047;
+  --success: #2e7d32;
+  --warning: #7cb342;
+}

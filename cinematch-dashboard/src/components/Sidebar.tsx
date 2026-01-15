@@ -5,11 +5,12 @@ import './Sidebar.css';
 const menuItems = [
     { path: '/dashboard', icon: '📊', label: 'Dashboard', theme: 'netflix' },
     { path: '/catalogo', icon: '🎬', label: 'Catalogo Film', theme: 'fox' },
-    { path: '/recommendations', icon: '🎬', label: 'Raccomandazioni', theme: 'a24' },
+    { path: '/recommendations', icon: '✨', label: 'Raccomandazioni', theme: 'a24' },
     { path: '/cinema', icon: '🎭', label: 'Cinema', theme: 'warner' },
     { path: '/sentiment', icon: '💬', label: 'Sentiment', theme: 'paramount' },
     { path: '/mood', icon: '😊', label: 'Mood', theme: 'lionsgate' },
     { path: '/predictions', icon: '📈', label: 'Previsioni', theme: 'universal' },
+    { path: '/quiz', icon: '🌿', label: 'Quiz Ghibli', theme: 'ghibli' },
 ];
 
 interface UserData {
@@ -50,14 +51,14 @@ export function Sidebar() {
 
     useEffect(() => {
         fetchUserData();
-        
+
         // Ascolta eventi di aggiornamento film
         const handleMoviesUpdate = () => {
             fetchUserData();
         };
-        
+
         window.addEventListener('moviesUpdated', handleMoviesUpdate);
-        
+
         return () => {
             window.removeEventListener('moviesUpdated', handleMoviesUpdate);
         };
@@ -135,7 +136,7 @@ export function Sidebar() {
         <aside className="sidebar">
             <div className="sidebar-header">
                 <NavLink to="/" className="logo">
-                    <span className="logo-icon">🎬</span>
+                    <span className="logo-icon">🎥</span>
                     <span className="logo-text">CineMatch</span>
                 </NavLink>
             </div>
@@ -182,7 +183,7 @@ export function Sidebar() {
                 <div className="avatar-modal-overlay" onClick={() => setShowAvatarModal(false)}>
                     <div className="avatar-modal" onClick={(e) => e.stopPropagation()}>
                         <h3>Scegli Avatar</h3>
-                        
+
                         <div className="avatar-upload-section">
                             <label htmlFor="avatar-upload" className="avatar-upload-btn">
                                 {uploadingAvatar ? 'Caricamento...' : '📤 Carica Immagine'}

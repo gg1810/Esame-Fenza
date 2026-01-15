@@ -52,6 +52,35 @@
     align-items: center;
 }
 
+.stats-inline {
+    display: flex;
+    gap: 16px;
+    margin-left: auto;
+    align-items: center;
+}
+
+.stats-inline .stat-chip {
+    padding: 0;
+    font-size: 0.85rem;
+    border-radius: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: var(--text-secondary);
+}
+
+.stats-inline .stat-chip .stat-icon {
+    font-size: 0.9rem !important;
+    text-shadow: none !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    width: auto !important;
+    height: auto !important;
+    display: inline !important;
+}
+
 .filter-label {
     color: var(--text-primary);
     font-size: 0.85rem;
@@ -222,12 +251,10 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(
-        135deg, 
-        rgba(255, 215, 0, 0.1) 0%, 
-        rgba(25, 118, 210, 0.2) 50%,
-        rgba(255, 215, 0, 0.1) 100%
-    );
+    background: linear-gradient(135deg,
+            rgba(255, 215, 0, 0.1) 0%,
+            rgba(25, 118, 210, 0.2) 50%,
+            rgba(255, 215, 0, 0.1) 100%);
     z-index: 1;
 }
 
@@ -249,12 +276,10 @@
 }
 
 .movie-card:hover .poster-placeholder {
-    background: linear-gradient(
-        135deg, 
-        rgba(255, 215, 0, 0.2) 0%, 
-        rgba(25, 118, 210, 0.3) 50%,
-        rgba(255, 215, 0, 0.2) 100%
-    );
+    background: linear-gradient(135deg,
+            rgba(255, 215, 0, 0.2) 0%,
+            rgba(25, 118, 210, 0.3) 50%,
+            rgba(255, 215, 0, 0.2) 100%);
 }
 
 .movie-card:hover .poster-icon {

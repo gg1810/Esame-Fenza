@@ -3,7 +3,7 @@ import { catalogAPI, dataAPI, type MovieRating } from '../services/api';
 import { MovieModal } from '../components/MovieModal';
 import './FilmVisti.css';
 
-interface Movie extends MovieRating {}
+interface Movie extends MovieRating { }
 
 interface MoviesByYear {
     [year: string]: Movie[];
@@ -42,12 +42,12 @@ export function FilmVisti() {
             }
             grouped[year].push(movie);
         });
-        
+
         // Ordina i film per rating all'interno di ogni anno
         Object.keys(grouped).forEach(year => {
             grouped[year].sort((a, b) => b.rating - a.rating);
         });
-        
+
         setGroupedMovies(grouped);
         // Espandi i primi 3 anni di default
         const years = Object.keys(grouped).sort((a, b) => parseInt(b) - parseInt(a));
@@ -74,8 +74,8 @@ export function FilmVisti() {
 
     const getSortedYears = () => {
         return Object.keys(groupedMovies).sort((a, b) => {
-            return sortOrder === 'desc' 
-                ? parseInt(b) - parseInt(a) 
+            return sortOrder === 'desc'
+                ? parseInt(b) - parseInt(a)
                 : parseInt(a) - parseInt(b);
         });
     };
@@ -133,7 +133,7 @@ export function FilmVisti() {
 
     const sortedYears = getSortedYears();
     const totalMovies = movies.length;
-    const avgRating = movies.length > 0 
+    const avgRating = movies.length > 0
         ? (movies.reduce((sum, m) => sum + m.rating, 0) / movies.length).toFixed(2)
         : '0';
 
@@ -144,26 +144,15 @@ export function FilmVisti() {
                 <p>Tutti i tuoi {totalMovies} film organizzati per anno di uscita</p>
             </div>
 
-            <div className="film-stats-bar">
-                <div className="stat-chip">
-                    <span className="stat-icon">🎬</span>
-                    <span>{totalMovies} film totali</span>
-                </div>
-                <div className="stat-chip">
-                    <span className="stat-icon">⭐</span>
-                    <span>Media {avgRating}/5</span>
-                </div>
-            </div>
-
             <div className="controls-bar">
                 <div className="sort-controls">
-                    <button 
+                    <button
                         className={`control-btn ${sortOrder === 'desc' ? 'active' : ''}`}
                         onClick={() => setSortOrder('desc')}
                     >
                         Più recenti
                     </button>
-                    <button 
+                    <button
                         className={`control-btn ${sortOrder === 'asc' ? 'active' : ''}`}
                         onClick={() => setSortOrder('asc')}
                     >
@@ -173,14 +162,14 @@ export function FilmVisti() {
 
                 <div className="filter-controls">
                     <span className="filter-label">Filtra per rating:</span>
-                    <button 
+                    <button
                         className={`rating-filter ${filterRating === null ? 'active' : ''}`}
                         onClick={() => setFilterRating(null)}
                     >
                         Tutti
                     </button>
                     {[5, 4, 3, 2, 1].map(r => (
-                        <button 
+                        <button
                             key={r}
                             className={`rating-filter ${filterRating === r ? 'active' : ''}`}
                             onClick={() => setFilterRating(r)}
@@ -198,19 +187,30 @@ export function FilmVisti() {
                         Comprimi tutto
                     </button>
                 </div>
+
+                <div className="stats-inline">
+                    <div className="stat-chip">
+                        <span className="stat-icon">🎬</span>
+                        <span>{totalMovies} film totali</span>
+                    </div>
+                    <div className="stat-chip">
+                        <span className="stat-icon">⭐</span>
+                        <span>Media {avgRating}/5</span>
+                    </div>
+                </div>
             </div>
 
             <div className="years-container">
                 {sortedYears.map(year => {
                     const yearMovies = getFilteredMovies(groupedMovies[year]);
                     if (yearMovies.length === 0) return null;
-                    
+
                     const isExpanded = expandedYears.has(year);
                     const yearAvg = (yearMovies.reduce((sum, m) => sum + m.rating, 0) / yearMovies.length).toFixed(1);
 
                     return (
                         <div key={year} className="year-section">
-                            <div 
+                            <div
                                 className={`year-header ${isExpanded ? 'expanded' : ''}`}
                                 onClick={() => toggleYear(year)}
                             >
@@ -235,9 +235,9 @@ export function FilmVisti() {
                                                     <span className="poster-year">{movie.year}</span>
                                                 </div>
                                                 {movie.letterboxd_uri && (
-                                                    <a 
-                                                        href={movie.letterboxd_uri} 
-                                                        target="_blank" 
+                                                    <a
+                                                        href={movie.letterboxd_uri}
+                                                        target="_blank"
                                                         rel="noopener noreferrer"
                                                         className="letterboxd-link"
                                                         onClick={(e) => e.stopPropagation()}

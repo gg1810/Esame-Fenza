@@ -3,7 +3,7 @@ import { catalogAPI, dataAPI, type CatalogMovie, type MovieRating } from '../ser
 import { MovieModal } from '../components/MovieModal';
 import './CatalogoFilm.css';
 
-interface UserMovie extends MovieRating {}
+interface UserMovie extends MovieRating { }
 
 interface MoviesByYear {
     [year: string]: UserMovie[];
@@ -21,6 +21,16 @@ export function CatalogoFilm() {
     const [modalMode, setModalMode] = useState<'view' | 'edit'>('view');
     const [showAddModal, setShowAddModal] = useState(false);
     const [addingMovie, setAddingMovie] = useState(false);
+
+    // Advanced Search State
+    const [isAdvancedSearch, setIsAdvancedSearch] = useState(false);
+    const [advancedFilters, setAdvancedFilters] = useState({
+        title: '',
+        actor: '',
+        director: '',
+        year: '',
+        genre: ''
+    });
 
     // Stato per il ricalcolo e refresh dati
     const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -67,12 +77,12 @@ export function CatalogoFilm() {
             }
             grouped[year].push(movie);
         });
-        
+
         // Ordina i film per rating all'interno di ogni anno
         Object.keys(grouped).forEach(year => {
             grouped[year].sort((a, b) => b.rating - a.rating);
         });
-        
+
         setGroupedMovies(grouped);
         // Espandi i primi 3 anni di default
         const years = Object.keys(grouped).sort((a, b) => parseInt(b) - parseInt(a));
@@ -99,8 +109,8 @@ export function CatalogoFilm() {
 
     const getSortedYears = () => {
         return Object.keys(groupedMovies).sort((a, b) => {
-            return sortOrder === 'desc' 
-                ? parseInt(b) - parseInt(a) 
+            return sortOrder === 'desc'
+                ? parseInt(b) - parseInt(a)
                 : parseInt(a) - parseInt(b);
         });
     };
@@ -143,7 +153,7 @@ export function CatalogoFilm() {
         const existing = movies.find(
             m => m.name.toLowerCase() === movie.title.toLowerCase() && m.year === movie.year
         );
-        
+
         if (existing) {
             setSelectedMovieForModal(existing);
         } else {
@@ -161,10 +171,10 @@ export function CatalogoFilm() {
 
     const addOrUpdateMovie = async (rating: number, comment: string) => {
         if (!selectedMovieForModal) return;
-        
+
         const name = 'title' in selectedMovieForModal ? selectedMovieForModal.title : selectedMovieForModal.name;
         const year = selectedMovieForModal.year || 0;
-        
+
         setAddingMovie(true);
         try {
             await catalogAPI.addOrUpdateMovie({
@@ -235,27 +245,111 @@ export function CatalogoFilm() {
 
             {/* Barra di ricerca */}
             <div className="search-section">
-                <div className="search-box">
-                    <span className="search-icon">🔍</span>
-                    <input
-                        type="text"
-                        placeholder="Cerca un film da aggiungere..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="search-input"
-                    />
-                    {searchQuery && (
+                <div className="search-header-row">
+                    {!isAdvancedSearch && (
+                        <div className="search-box">
+                            <span className="search-icon">🔍</span>
+                            <input
+                                type="text"
+                                placeholder="Cerca un film da aggiungere..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="search-input"
+                            />
+                            {searchQuery && (
+                                <button
+                                    className="clear-search"
+                                    onClick={() => {
+                                        setSearchQuery('');
+                                        setSearchResults([]);
+                                    }}
+                                >
+                                    ✕
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    {!isAdvancedSearch && (
                         <button
-                            className="clear-search"
-                            onClick={() => {
-                                setSearchQuery('');
-                                setSearchResults([]);
-                            }}
+                            className="advanced-search-toggle"
+                            onClick={() => setIsAdvancedSearch(true)}
                         >
-                            ✕
+                            Ricerca Avanzata
                         </button>
                     )}
                 </div>
+
+                {isAdvancedSearch && (
+                    <div className="advanced-search-panel">
+                        <div className="advanced-grid">
+                            <div className="input-group">
+                                <label>Titolo</label>
+                                <input
+                                    type="text"
+                                    className="advanced-input"
+                                    placeholder="Es. Inception"
+                                    value={advancedFilters.title}
+                                    onChange={(e) => setAdvancedFilters({ ...advancedFilters, title: e.target.value })}
+                                />
+                            </div>
+                            <div className="input-group">
+                                <label>Attore</label>
+                                <input
+                                    type="text"
+                                    className="advanced-input"
+                                    placeholder="Es. Leonardo DiCaprio"
+                                    value={advancedFilters.actor}
+                                    onChange={(e) => setAdvancedFilters({ ...advancedFilters, actor: e.target.value })}
+                                />
+                            </div>
+                            <div className="input-group">
+                                <label>Regista</label>
+                                <input
+                                    type="text"
+                                    className="advanced-input"
+                                    placeholder="Es. Christopher Nolan"
+                                    value={advancedFilters.director}
+                                    onChange={(e) => setAdvancedFilters({ ...advancedFilters, director: e.target.value })}
+                                />
+                            </div>
+                            <div className="input-group">
+                                <label>Anno</label>
+                                <input
+                                    type="number"
+                                    className="advanced-input"
+                                    placeholder="Es. 2010"
+                                    value={advancedFilters.year}
+                                    onChange={(e) => setAdvancedFilters({ ...advancedFilters, year: e.target.value })}
+                                />
+                            </div>
+                        </div>
+                        <div className="advanced-actions">
+                            <button
+                                className="search-btn-secondary"
+                                onClick={() => {
+                                    setIsAdvancedSearch(false);
+                                    setSearchQuery('');
+                                    setSearchResults([]);
+                                }}
+                            >
+                                Torna alla ricerca semplice
+                            </button>
+                            <button
+                                className="search-btn-primary"
+                                onClick={() => {
+                                    console.log("Searching with filters:", advancedFilters);
+                                    // Fallback to simple title search for now if title is present
+                                    if (advancedFilters.title) {
+                                        searchMovies(advancedFilters.title);
+                                    }
+                                }}
+                            >
+                                Cerca nel Catalogo
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 {/* Risultati ricerca */}
                 {(searchQuery.length >= 2 || searchResults.length > 0) && (
@@ -267,7 +361,10 @@ export function CatalogoFilm() {
                         ) : searchResults.length > 0 ? (
                             <>
                                 <div className="results-header">
-                                    <span>🎯 {searchResults.length} risultati per "{searchQuery}"</span>
+                                    <span>
+                                        🎯 {searchResults.length} risultati
+                                        {isAdvancedSearch ? ' trovati' : ` per "${searchQuery}"`}
+                                    </span>
                                 </div>
                                 <div className="results-grid">
                                     {searchResults.map((movie) => (
@@ -322,28 +419,16 @@ export function CatalogoFilm() {
                 <span>📚 La Tua Collezione</span>
             </div>
 
-            {/* Stats Bar - come originale */}
-            <div className="film-stats-bar">
-                <div className="stat-chip">
-                    <span className="stat-icon">🎬</span>
-                    <span>{totalMovies} film totali</span>
-                </div>
-                <div className="stat-chip">
-                    <span className="stat-icon">⭐</span>
-                    <span>Media {avgRating}/5</span>
-                </div>
-            </div>
-
-            {/* Controlli - come originale */}
+            {/* Controlli con Stats a destra */}
             <div className="controls-bar">
                 <div className="sort-controls">
-                    <button 
+                    <button
                         className={`control-btn ${sortOrder === 'desc' ? 'active' : ''}`}
                         onClick={() => setSortOrder('desc')}
                     >
                         Più recenti
                     </button>
-                    <button 
+                    <button
                         className={`control-btn ${sortOrder === 'asc' ? 'active' : ''}`}
                         onClick={() => setSortOrder('asc')}
                     >
@@ -353,14 +438,14 @@ export function CatalogoFilm() {
 
                 <div className="filter-controls">
                     <span className="filter-label">Filtra per rating:</span>
-                    <button 
+                    <button
                         className={`rating-filter ${filterRating === null ? 'active' : ''}`}
                         onClick={() => setFilterRating(null)}
                     >
                         Tutti
                     </button>
                     {[5, 4, 3, 2, 1].map(r => (
-                        <button 
+                        <button
                             key={r}
                             className={`rating-filter ${filterRating === r ? 'active' : ''}`}
                             onClick={() => setFilterRating(r)}
@@ -378,6 +463,17 @@ export function CatalogoFilm() {
                         Comprimi tutto
                     </button>
                 </div>
+
+                <div className="stats-inline">
+                    <div className="stat-chip">
+                        <span className="stat-icon">🎬</span>
+                        <span>{totalMovies} film totali</span>
+                    </div>
+                    <div className="stat-chip">
+                        <span className="stat-icon">⭐</span>
+                        <span>Media {avgRating}/5</span>
+                    </div>
+                </div>
             </div>
 
             {/* Film raggruppati per anno - COME ORIGINALE */}
@@ -392,13 +488,13 @@ export function CatalogoFilm() {
                     {sortedYears.map(year => {
                         const yearMovies = getFilteredMovies(groupedMovies[year]);
                         if (yearMovies.length === 0) return null;
-                        
+
                         const isExpanded = expandedYears.has(year);
                         const yearAvg = (yearMovies.reduce((sum, m) => sum + m.rating, 0) / yearMovies.length).toFixed(1);
 
                         return (
                             <div key={year} className="year-section">
-                                <div 
+                                <div
                                     className={`year-header ${isExpanded ? 'expanded' : ''}`}
                                     onClick={() => toggleYear(year)}
                                 >
@@ -416,8 +512,8 @@ export function CatalogoFilm() {
                                             <div key={index} className="movie-card" onClick={() => openEditModal(movie)}>
                                                 <div className="movie-poster">
                                                     {movie.poster_url && movie.poster_url !== STOCK_POSTER ? (
-                                                        <img 
-                                                            src={movie.poster_url} 
+                                                        <img
+                                                            src={movie.poster_url}
                                                             alt={movie.name}
                                                             onError={(e) => {
                                                                 e.currentTarget.style.display = 'none';
