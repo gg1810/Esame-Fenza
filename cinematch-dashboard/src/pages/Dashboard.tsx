@@ -162,9 +162,9 @@ export function Dashboard() {
             .catch(err => console.error('Errore trend globali:', err));
     }
 
-    const fetchPersonMovies = (name: string, type: 'director' | 'actor') => {
+    const fetchPersonMovies = (name: string, type: 'director' | 'actor', actualCount?: number) => {
         setLoadingPersonMovies(true);
-        setSelectedPerson({ name, type });
+        setSelectedPerson({ name, type, actualCount });
         setPersonMovies([]);
 
         fetch(`http://localhost:8000/movies/person?name=${encodeURIComponent(name)}&type=${type}`, {
@@ -773,7 +773,7 @@ export function Dashboard() {
                     <p className="chart-subtitle">I registi di cui hai visto più opere</p>
                     <div className="ranking-list">
                         {topDirectors.slice(0, 10).map((director, index) => (
-                            <div key={director.name} className="ranking-item clickable" onClick={() => fetchPersonMovies(director.name, 'director')}>
+                            <div key={director.name} className="ranking-item clickable" onClick={() => fetchPersonMovies(director.name, 'director', director.count)}>
                                 <span className="rank-position">#{index + 1}</span>
                                 <div className="rank-info">
                                     <span className="rank-name">{director.name}</span>
@@ -816,7 +816,7 @@ export function Dashboard() {
                     <div className="ranking-list">
                         <div className="ranking-list">
                             {filteredDirectors.map((director: any, index: number) => (
-                                <div key={director.name} className="ranking-item clickable" onClick={() => fetchPersonMovies(director.name, 'director')}>
+                                <div key={director.name} className="ranking-item clickable" onClick={() => fetchPersonMovies(director.name, 'director', director.count)}>
                                     <span className="rank-position">#{index + 1}</span>
                                     <div className="rank-info">
                                         <span className="rank-name">{director.name}</span>
@@ -852,7 +852,7 @@ export function Dashboard() {
                     <p className="chart-subtitle">I talenti che appaiono più spesso nei tuoi film</p>
                     <div className="ranking-list">
                         {topActors.slice(0, 10).map((actor, index) => (
-                            <div key={actor.name} className="ranking-item clickable" onClick={() => fetchPersonMovies(actor.name, 'actor')}>
+                            <div key={actor.name} className="ranking-item clickable" onClick={() => fetchPersonMovies(actor.name, 'actor', actor.count)}>
                                 <span className="rank-position">#{index + 1}</span>
                                 <div className="rank-info">
                                     <span className="rank-name">{actor.name}</span>
@@ -895,7 +895,7 @@ export function Dashboard() {
                     <div className="ranking-list">
                         <div className="ranking-list">
                             {filteredActors.map((actor: any, index: number) => (
-                                <div key={actor.name} className="ranking-item clickable" onClick={() => fetchPersonMovies(actor.name, 'actor')}>
+                                <div key={actor.name} className="ranking-item clickable" onClick={() => fetchPersonMovies(actor.name, 'actor', actor.count)}>
                                     <span className="rank-position">#{index + 1}</span>
                                     <div className="rank-info">
                                         <span className="rank-name">{actor.name}</span>
@@ -983,11 +983,11 @@ export function Dashboard() {
                     <span className="quick-stat-label">Durata Media (min)</span>
                 </div>
                 <div className="quick-stat-card">
-                    <span className="quick-stat-value">{displayData.best_rated_directors?.length || 0}</span>
+                    <span className="quick-stat-value">{displayData.unique_directors_count || 0}</span>
                     <span className="quick-stat-label">Registi Diversi</span>
                 </div>
                 <div className="quick-stat-card">
-                    <span className="quick-stat-value">{displayData.best_rated_actors?.length || 0}</span>
+                    <span className="quick-stat-value">{displayData.unique_actors_count || 0}</span>
                     <span className="quick-stat-label">Attori Diversi</span>
                 </div>
             </div>
@@ -1002,7 +1002,7 @@ export function Dashboard() {
 
                         <div className="modal-header">
                             <h2>{selectedPerson.type === 'director' ? '🎬 Film di' : '🌟 Film con'} {selectedPerson.name}</h2>
-                            <p>Hai visto {personMovies.length} film con questo {selectedPerson.type === 'director' ? 'regista' : 'attore'}</p>
+                            <p>Hai visto {selectedPerson.actualCount || personMovies.length} film con questo {selectedPerson.type === 'director' ? 'regista' : 'attore'}</p>
                         </div>
 
                         {loadingPersonMovies ? (

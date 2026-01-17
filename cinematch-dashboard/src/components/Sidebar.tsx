@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import './Sidebar.css';
 
 const menuItems = [
@@ -27,7 +27,6 @@ interface PresetAvatar {
 }
 
 export function Sidebar() {
-    const location = useLocation();
     const navigate = useNavigate();
     const [userData, setUserData] = useState<UserData | null>(null);
     const [showAvatarModal, setShowAvatarModal] = useState(false);
@@ -129,7 +128,6 @@ export function Sidebar() {
     };
 
     const displayName = userData?.full_name || userData?.username || 'Utente';
-    const filmCount = userData?.movies_count || 0;
     const avatarSrc = userData?.avatar || null;
 
     return (
@@ -171,7 +169,6 @@ export function Sidebar() {
                     </div>
                     <div className="user-details">
                         <span className="user-name">{displayName}</span>
-                        <span className="user-films">{filmCount} film visti</span>
                     </div>
                 </div>
                 <button className="logout-btn" onClick={handleLogout} title="Logout">
