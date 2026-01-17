@@ -1,6 +1,5 @@
 """
 Quiz Generator Module - VERSIONE FINALE CON QWEN 2.5 7B
-Massima qualità per domande quiz in italiano perfetto
 """
 import json
 import re
@@ -19,7 +18,7 @@ from pydantic import BaseModel, Field
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ⭐ MODELLO MIGLIORE - QWEN 2.5 7B
+# MODELLO - QWEN 2.5 7B
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct-q5_K_M")
 
@@ -200,7 +199,7 @@ async def call_ollama_generate(prompt: str) -> str:
 async def _generate_single_question(movie: Dict) -> Optional[Dict]:
     """Genera una singola domanda (interno)."""
     
-    # ⭐ PROMPT OTTIMIZZATO PER QWEN 2.5 7B
+    # PROMPT PER QWEN 2.5 7B (Più dettagliato con esempio esplicito)
     prompt = f"""Sei un esperto di cinema. Genera un quiz di ECCELLENTE QUALITÀ in ITALIANO PERFETTO.
 
 FILM: "{movie.get('title')}" ({movie.get('year')})

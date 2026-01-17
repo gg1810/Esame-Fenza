@@ -2127,7 +2127,7 @@ async def search_catalog(
     q: str,
     limit: int = 20
 ):
-    """Ricerca film nel catalogo per titolo."""
+    """Ricerca film nel catalogo per titolo (supporta italiano, inglese e titolo originale)."""
     norm_q = normalize_title(q)
     # Use ^ to match only at the beginning as requested by the user
     regex_q = f"^{re.escape(q)}"
@@ -2137,10 +2137,12 @@ async def search_catalog(
         {"$or": [
             {"title": {"$regex": regex_q, "$options": "i"}},
             {"original_title": {"$regex": regex_q, "$options": "i"}},
+            {"english_title": {"$regex": regex_q, "$options": "i"}},  # Aggiunto per ricerca in inglese
             {"normalized_title": {"$regex": regex_norm, "$options": "i"}},
-            {"normalized_original_title": {"$regex": regex_norm, "$options": "i"}}
+            {"normalized_original_title": {"$regex": regex_norm, "$options": "i"}},
+            {"normalized_english_title": {"$regex": regex_norm, "$options": "i"}}  # Aggiunto per ricerca normalizzata inglese
         ]},
-        {"_id": 0, "imdb_id": 1, "title": 1, "year": 1, "poster_url": 1, "avg_vote": 1, "genres": 1, "description": 1, "director": 1, "actors": 1, "duration": 1, "date_published": 1}
+        {"_id": 0, "imdb_id": 1, "title": 1, "year": 1, "poster_url": 1, "avg_vote": 1, "genres": 1, "description": 1, "director": 1, "actors": 1, "duration": 1, "date_published": 1, "english_title": 1, "original_title": 1}
     ).sort([("date_published", -1), ("votes", -1)]).limit(limit))
     
     # Assicura poster_url

@@ -1,9 +1,6 @@
 """
 Spark Structured Streaming application per elaborazione eventi film utente.
 Consuma eventi da Kafka e aggiorna statistiche pre-calcolate in MongoDB.
-
-Per eseguire:
-    spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1,org.mongodb.spark:mongo-spark-connector_2.12:10.2.0 spark_stats_processor.py
 """
 import os
 import json
@@ -440,8 +437,8 @@ def compute_user_stats(movies, catalog_collection, prefetched_map=None):
         except Exception as e:
             logger.error(f"⚠️ Errore build catalog_map: {e}")
     
-    # NOTA: Usiamo TUTTI i film dell'utente (non filtro 10 giorni)
-    # Il grafico a torta dei generi deve essere relativo a tutti film visti dell'utente.
+    
+    # Il grafico a torta dei generi è relativo a tutti film visti dell'utente.
     
     processed_movies = []
     
@@ -519,7 +516,7 @@ def compute_user_stats(movies, catalog_collection, prefetched_map=None):
                 genre_counter[g] += 1
 
         # --- LOGICA REGISTI E ATTORI ---
-        # Registi: Usa dati dal catalogo (più completi)
+        # Registi
         director = enriched_movie.get('director') or movie.get('director')
         if director:
             directors_list = [d.strip() for d in re.split(r'[,|]', str(director)) if d.strip()]
@@ -530,7 +527,7 @@ def compute_user_stats(movies, catalog_collection, prefetched_map=None):
                 if user_rating is not None:
                     director_ratings[d].append(user_rating)
         
-        # Attori: Usa dati dal catalogo (più completi)
+        # Attori
         actors = enriched_movie.get('actors') or movie.get('actors')
         if actors:
             actors_list = [a.strip() for a in re.split(r'[,|]', str(actors)) if a.strip()]
@@ -545,7 +542,7 @@ def compute_user_stats(movies, catalog_collection, prefetched_map=None):
             enriched_movie["_id"] = str(enriched_movie["_id"])
         processed_movies.append(enriched_movie)
 
-    # --- CALCOLI STATISTICI AVANZATI (Ex Pandas logic) ---
+    # --- CALCOLI STATISTICI AVANZATI ---
     
     # 1. Top Rated Movies (Voto >= 4, ordinati per voto decrescente)
     top_rated_candidates = [m for m in processed_movies if m.get('rating', 0) >= 4]

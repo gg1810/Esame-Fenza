@@ -108,6 +108,7 @@
     opacity: 0;
     cursor: pointer;
     transition: transform 0.2s ease;
+    display: flex;
 }
 
 .movies-grid>div:hover {
