@@ -212,20 +212,9 @@ def process_partition(iterator):
 
 def process_batch(batch_df, batch_id):
     """
-    Processa un micro-batch.
-    Invece di collect(), usa foreachPartition per parallelismo reale.
+    Processa un micro-batch per le statistiche utente.
+    Global trends sono gestiti separatamente via Structured Streaming.
     """
-    # --- GLOBAL TRENDS UPDATE (Driver side - light) ---
-    # Throttling: Aggiorna solo se sono passati almeno 60 secondi
-    global last_trends_update
-    now = datetime.now()
-    if 'last_trends_update' not in globals() or (now - last_trends_update).total_seconds() > 60:
-        try:
-            update_global_trends(spark_session=batch_df.sparkSession)
-            last_trends_update = now
-        except Exception as e:
-            logger.error(f"❌ Errore aggiornamento trend globali: {e}")
-
     if batch_df.isEmpty():
         return
     
@@ -248,140 +237,353 @@ def process_batch(batch_df, batch_id):
 
 
 
-def update_global_trends(spark_session):
+def bootstrap_global_stats():
     """
-    Calcola trend globali aggregando i film degli ULTIMI 10 GIORNI di tutti gli utenti.
-    I dati della community devono fare riferimento ai dati di 10 giorni.
+    Bootstrap: Legge TUTTI i film storici da MongoDB e inizializza global_stats.
+    Chiamata UNA VOLTA all'avvio di Spark prima dello streaming.
+    Lo streaming poi aggiornerà i conteggi in modo incrementale.
     """
-    logger.info("🌍 Aggiornamento Trend Globali (ultimi 10 giorni)...")
-    
     from pymongo import MongoClient
     from datetime import timedelta
+    
+    logger.info("🚀 [Bootstrap] Inizializzazione global_stats da dati storici MongoDB...")
+    
     client = MongoClient(MONGODB_URL)
     db = client.cinematch_db
     
-    # Calcola data limite (10 giorni fa)
-    italy_tz = pytz.timezone('Europe/Rome')
-    today = datetime.now(italy_tz)
-    ten_days_ago = today - timedelta(days=10)
-    
-    def parse_date_internal(d_str):
-        if not d_str: return datetime.min
-        try: return datetime.fromisoformat(str(d_str).replace('Z', '+00:00'))
-        except:
-            try: return datetime.strptime(str(d_str), "%Y-%m-%d")
-            except: return datetime.min
-    
-    # 1. Recupera TUTTI i film di TUTTI gli utenti degli ultimi 10 giorni
-    all_recent_movies = list(db.movies.find({
-        "$or": [
-            {"date": {"$gte": ten_days_ago.strftime("%Y-%m-%d")}},
-            {"added_at": {"$gte": ten_days_ago.isoformat()}}
+    try:
+        # Calcola data limite (ultimi 30 giorni per dati più ricchi)
+        italy_tz = pytz.timezone('Europe/Rome')
+        today = datetime.now(italy_tz)
+        thirty_days_ago = today - timedelta(days=30)
+        
+        # Leggi TUTTI i film aggiunti negli ultimi 30 giorni
+        all_recent_movies = list(db.movies.find({
+            "$or": [
+                {"date": {"$gte": thirty_days_ago.strftime("%Y-%m-%d")}},
+                {"added_at": {"$gte": thirty_days_ago.isoformat()}}
+            ]
+        }))
+        
+        if not all_recent_movies:
+            logger.info("⚠️ [Bootstrap] Nessun film recente trovato, global_stats vuoto")
+            db.global_stats.update_one(
+                {"type": "global_trends"},
+                {"$set": {
+                    "type": "global_trends",
+                    "top_movies": [],
+                    "trending_genres": [],
+                    "movie_counts": {},
+                    "genre_counts": {},
+                    "updated_at": datetime.now(italy_tz).isoformat(),
+                    "source": "bootstrap_empty"
+                }},
+                upsert=True
+            )
+            client.close()
+            return
+        
+        # Aggregazione conteggi film
+        movie_counts = Counter()
+        movie_data_map = {}
+        genre_counts = Counter()
+        
+        # Raccogli titoli per batch lookup catalogo
+        all_titles = list(set([m.get('name') for m in all_recent_movies if m.get('name')]))
+        normalized_titles = [normalize_title(t) for t in all_titles]
+        
+        # Batch lookup catalogo
+        catalog_map = {}
+        if all_titles:
+            try:
+                catalog_docs = list(db.movies_catalog.find({
+                    "$or": [
+                        {"title": {"$in": all_titles}},
+                        {"original_title": {"$in": all_titles}},
+                        {"normalized_title": {"$in": normalized_titles}},
+                        {"normalized_original_title": {"$in": normalized_titles}}
+                    ]
+                }))
+                for d in catalog_docs:
+                    if d.get('title'): catalog_map[d.get('title')] = d
+                    if d.get('original_title'): catalog_map[d.get('original_title')] = d
+                    if d.get('normalized_title'): catalog_map[d.get('normalized_title')] = d
+                    if d.get('normalized_original_title'): catalog_map[d.get('normalized_original_title')] = d
+            except Exception as e:
+                logger.error(f"⚠️ [Bootstrap] Errore lookup catalogo: {e}")
+        
+        # Processa ogni film
+        for movie in all_recent_movies:
+            title = movie.get("name")
+            if not title:
+                continue
+            
+            movie_counts[title] += 1
+            
+            # Lookup catalogo per poster e generi
+            norm_title = normalize_title(title)
+            catalog_info = catalog_map.get(title) or catalog_map.get(norm_title) or {}
+            
+            poster = catalog_info.get("poster_url") or movie.get("poster_url")
+            if not poster or "placeholder" in str(poster):
+                poster = None
+            
+            if title not in movie_data_map or not movie_data_map[title].get("poster_path"):
+                movie_data_map[title] = {"title": title, "poster_path": poster}
+            
+            # Generi
+            genres = catalog_info.get("genres") or movie.get("genres") or []
+            if isinstance(genres, str):
+                genres = [g.strip() for g in genres.split(',')]
+            for g in genres:
+                if g:
+                    genre_counts[g] += 1
+        
+        # Formatta Top 10 Movies
+        top_movies = []
+        for title, cnt in movie_counts.most_common(10):
+            m_info = movie_data_map.get(title, {"title": title, "poster_path": None})
+            top_movies.append({
+                "title": m_info["title"],
+                "poster_path": m_info["poster_path"],
+                "count": cnt
+            })
+        
+        # Formatta Trending Genres
+        total_g = sum(genre_counts.values()) or 1
+        trending_genres = [
+            {"genre": name, "count": cnt, "percentage": round((cnt / total_g) * 100, 1)}
+            for name, cnt in genre_counts.most_common(10)
         ]
-    }))
-    
-    if not all_recent_movies:
-        logger.info("⚠️ Nessun film negli ultimi 10 giorni per i trend globali")
+        
+        # Salva in MongoDB (con conteggi raw per merge streaming + cache poster)
+        poster_cache = {title: movie_data_map.get(title, {}).get("poster_path") 
+                        for title in movie_counts.keys()}
+        
+        db.global_stats.update_one(
+            {"type": "global_trends"},
+            {"$set": {
+                "type": "global_trends",
+                "top_movies": top_movies,
+                "trending_genres": trending_genres,
+                "movie_counts": dict(movie_counts),  # Per merge streaming
+                "genre_counts": dict(genre_counts),  # Per merge streaming  
+                "poster_cache": poster_cache,  # Cache poster per streaming
+                "updated_at": datetime.now(italy_tz).isoformat(),
+                "total_movies_analyzed": len(all_recent_movies),
+                "source": "bootstrap"
+            }},
+            upsert=True
+        )
+        
+        logger.info(f"✅ [Bootstrap] Global stats inizializzati: {len(all_recent_movies)} film, top {len(top_movies)} titoli")
+        
+    except Exception as e:
+        logger.error(f"❌ [Bootstrap] Errore: {e}")
+    finally:
         client.close()
+
+
+def write_global_trends_to_mongo(batch_df, batch_id):
+    """
+    Callback per writeStream: INCREMENTA o DECREMENTA i conteggi in base all'event_type.
+    Gestisce ADD/UPDATE (incrementa) e DELETE (decrementa).
+    Preserva i poster URL esistenti.
+    """
+    from pymongo import MongoClient
+    
+    if batch_df.isEmpty():
         return
-
-    # 2. Aggregazione Film Popolari (basata su visioni negli ultimi 10 giorni)
-    movie_counts = Counter()
-    movie_data_map = {}
     
-    # 3. Aggregazione Generi
-    global_genre_counts = Counter()
+    logger.info(f"📊 [Streaming] Batch {batch_id}: Aggiornamento incrementale global trends...")
     
-    # Raccogli titoli per query batch al catalogo
-    all_titles = list(set([m.get('name') for m in all_recent_movies if m.get('name')]))
-    normalized_titles = [normalize_title(t) for t in all_titles]
+    client = MongoClient(MONGODB_URL)
+    db = client.cinematch_db
     
-    # Query batch al catalogo
-    catalog_map = {}
-    if all_titles:
-        try:
-            catalog_docs = list(db.movies_catalog.find({
-                "$or": [
-                    {"title": {"$in": all_titles}},
-                    {"original_title": {"$in": all_titles}},
-                    {"normalized_title": {"$in": normalized_titles}},
-                    {"normalized_original_title": {"$in": normalized_titles}}
-                ]
-            }))
-            
-            for d in catalog_docs:
-                if d.get('title'): catalog_map[d.get('title')] = d
-                if d.get('original_title'): catalog_map[d.get('original_title')] = d
-                if d.get('normalized_title'): catalog_map[d.get('normalized_title')] = d
-                if d.get('normalized_original_title'): catalog_map[d.get('normalized_original_title')] = d
-        except Exception as e:
-            logger.error(f"⚠️ Errore build catalog_map per global trends: {e}")
-    
-    for movie in all_recent_movies:
-        title = movie.get("name")
-        if not title:
-            continue
-            
-        # Conta visione
-        movie_counts[title] += 1
+    try:
+        rows = batch_df.collect()
+        if not rows:
+            client.close()
+            return
         
-        # Cerca nel catalogo per poster e generi
-        norm_title = normalize_title(title)
-        catalog_info = catalog_map.get(title) or catalog_map.get(norm_title) or {}
+        # 1. Leggi stato esistente (da bootstrap o precedenti batch)
+        existing = db.global_stats.find_one({"type": "global_trends"}) or {}
+        movie_counts = Counter(existing.get("movie_counts", {}))
+        genre_counts = Counter(existing.get("genre_counts", {}))
+        poster_cache = existing.get("poster_cache", {})  # Cache poster esistenti
         
-        poster = catalog_info.get("poster_url") or movie.get("poster_url")
-        if not poster or "placeholder" in str(poster):
-            poster = None
+        # 2. Raccogli nuovi titoli per lookup catalogo
+        new_titles = set()
+        for row in rows:
+            if row.movie_name:
+                new_titles.add(row.movie_name)
+        
+        normalized_titles = [normalize_title(t) for t in new_titles]
+        
+        catalog_map = {}
+        if new_titles:
+            try:
+                catalog_docs = list(db.movies_catalog.find({
+                    "$or": [
+                        {"title": {"$in": list(new_titles)}},
+                        {"original_title": {"$in": list(new_titles)}},
+                        {"normalized_title": {"$in": normalized_titles}},
+                        {"normalized_original_title": {"$in": normalized_titles}}
+                    ]
+                }))
+                for d in catalog_docs:
+                    if d.get('title'): catalog_map[d.get('title')] = d
+                    if d.get('original_title'): catalog_map[d.get('original_title')] = d
+                    if d.get('normalized_title'): catalog_map[d.get('normalized_title')] = d
+                    if d.get('normalized_original_title'): catalog_map[d.get('normalized_original_title')] = d
+            except Exception as e:
+                logger.error(f"⚠️ [Streaming] Errore lookup catalogo: {e}")
+        
+        # 3. Processa eventi - gestisce ADD e DELETE
+        logger.info(f"   📋 Processando {len(rows)} righe aggregate...")
+        for row in rows:
+            # Accesso sicuro alle colonne della Row
+            row_dict = row.asDict()
+            title = row_dict.get('movie_name')
+            event_type = row_dict.get('event_type', 'ADD')
+            delta = row_dict.get('watch_count', 1)
             
-        if title not in movie_data_map or not movie_data_map[title].get("poster_path"):
-            movie_data_map[title] = {
+            if not title:
+                continue
+            
+            # Determina se incrementare o decrementare
+            if event_type and 'DELETE' in str(event_type).upper():
+                # DELETE: decrementa
+                old_count = movie_counts.get(title, 0)
+                movie_counts[title] = max(0, old_count - delta)
+                logger.info(f"   ➖ DELETE {title}: {old_count} - {delta} = {movie_counts[title]}")
+                if movie_counts[title] == 0:
+                    del movie_counts[title]  # Rimuovi se zero
+            else:
+                # ADD/UPDATE: incrementa
+                old_count = movie_counts.get(title, 0)
+                movie_counts[title] = old_count + delta
+                logger.info(f"   ➕ ADD {title}: {old_count} + {delta} = {movie_counts[title]}")
+            
+            # Aggiorna poster cache (solo se abbiamo un poster)
+            norm_title = normalize_title(title)
+            catalog_info = catalog_map.get(title) or catalog_map.get(norm_title) or {}
+            poster = catalog_info.get("poster_url")
+            if poster and title not in poster_cache:
+                poster_cache[title] = poster
+            elif poster and not poster_cache.get(title):
+                poster_cache[title] = poster
+            
+            # Aggiorna generi (solo per ADD/UPDATE)
+            if not (event_type and 'DELETE' in str(event_type).upper()):
+                genres = catalog_info.get("genres") or []
+                if isinstance(genres, str):
+                    genres = [g.strip() for g in genres.split(',')]
+                for g in genres:
+                    if g:
+                        genre_counts[g] += delta
+        
+        # 4. Ricalcola Top 10 con conteggi aggiornati
+        top_movies = []
+        for title, cnt in movie_counts.most_common(10):
+            # Usa poster dalla cache, poi catalogo come fallback
+            poster = poster_cache.get(title)
+            if not poster:
+                norm = normalize_title(title)
+                cat = catalog_map.get(title) or catalog_map.get(norm) or {}
+                poster = cat.get("poster_url")
+                if poster:
+                    poster_cache[title] = poster  # Salva in cache
+            
+            top_movies.append({
                 "title": title,
-                "poster_path": poster
-            }
+                "poster_path": poster,
+                "count": cnt
+            })
         
-        # Aggrega Generi (preferisci catalogo, poi film utente)
-        genres = catalog_info.get("genres") or movie.get("genres") or []
-        if isinstance(genres, str):
-            genres = [g.strip() for g in genres.split(',')]
-        for g in genres:
-            if g:
-                global_genre_counts[g] += 1
+        # 5. Ricalcola Trending Genres
+        total_g = sum(genre_counts.values()) or 1
+        trending_genres = [
+            {"genre": name, "count": cnt, "percentage": round((cnt / total_g) * 100, 1)}
+            for name, cnt in genre_counts.most_common(10)
+        ]
+        
+        # 6. Salva con conteggi aggiornati e poster cache
+        db.global_stats.update_one(
+            {"type": "global_trends"},
+            {"$set": {
+                "type": "global_trends",
+                "top_movies": top_movies,
+                "trending_genres": trending_genres,
+                "movie_counts": dict(movie_counts),
+                "genre_counts": dict(genre_counts),
+                "poster_cache": poster_cache,
+                "updated_at": datetime.now(pytz.timezone('Europe/Rome')).isoformat(),
+                "source": "streaming_incremental"
+            }},
+            upsert=True
+        )
+        
+        logger.info(f"✅ [Streaming] Top {len(top_movies)} film aggiornati (batch {batch_id})")
+        
+    except Exception as e:
+        logger.error(f"❌ [Streaming] Errore write_global_trends_to_mongo: {e}")
+    finally:
+        client.close()
 
-    # 4. Formatta Top 10 Movies
-    top_10_movies = []
-    for title, count in movie_counts.most_common(10):
-        m_info = movie_data_map.get(title, {"title": title, "poster_path": None})
-        top_10_movies.append({
-            "title": m_info["title"],
-            "poster_path": m_info["poster_path"],
-            "watch_count": count
-        })
 
-    # 5. Formatta Trending Genres
-    trending_genres = []
-    total_g_count = sum(global_genre_counts.values()) or 1
-    for name, count in global_genre_counts.most_common(10):
-        trending_genres.append({
-            "genre": name,
-            "count": count,
-            "percentage": round((count / total_g_count) * 100, 1)
-        })
-
-    # 6. Salva risultati globali
-    db.global_stats.update_one(
-        {}, 
-        {"$set": {
-            "top_movies": top_10_movies,
-            "trending_genres": trending_genres,
-            "updated_at": datetime.now(pytz.timezone('Europe/Rome')).isoformat(),
-            "total_movies_analyzed": len(all_recent_movies),
-            "period_days": 10
-        }}, 
-        upsert=True
+def start_global_trends_stream(spark, parsed_stream):
+    """
+    Avvia uno stream Spark Structured Streaming per i film più visti.
+    Include event_type per gestire ADD/UPDATE e DELETE separatamente.
+    """
+    from pyspark.sql.functions import (
+        to_timestamp, count as spark_count, 
+        col, first
     )
     
-    logger.info(f"✅ Trend Globali aggiornati basandosi su {len(all_recent_movies)} film degli ultimi 10 giorni")
-    client.close()
+    logger.info("🚀 Avvio Structured Streaming per Global Trends...")
+    
+    # 1. Prepara lo stream con event_type incluso
+    events_with_ts = parsed_stream \
+        .withColumn("event_ts", to_timestamp(col("timestamp"))) \
+        .filter(col("movie.name").isNotNull()) \
+        .select(
+            col("movie.name").alias("movie_name"),
+            col("event_type"),
+            col("event_ts")
+        )
+    
+    # 2. Applica watermark
+    watermarked = events_with_ts.withWatermark("event_ts", "1 hour")
+    
+    # 3. Aggregazione per movie_name + event_type
+    #    Questo ci permette di sapere quanti ADD e quanti DELETE per ogni film
+    aggregated = watermarked \
+        .groupBy(
+            col("movie_name"),
+            col("event_type")
+        ) \
+        .agg(spark_count("*").alias("watch_count")) \
+        .select(
+            col("movie_name"),
+            col("event_type"),
+            col("watch_count")
+        )
+    
+    # 4. Avvia lo stream con output su MongoDB via foreachBatch
+    global_trends_query = aggregated \
+        .writeStream \
+        .foreachBatch(write_global_trends_to_mongo) \
+        .outputMode("update") \
+        .option("checkpointLocation", "/tmp/spark-checkpoints/today-trends") \
+        .trigger(processingTime="30 seconds") \
+        .queryName("today_trends_stream") \
+        .start()
+    
+    logger.info("✅ Stream Global Trends avviato (trigger: 30s, watermark: 1h)")
+    
+    return global_trends_query
 
 
 
@@ -711,6 +913,9 @@ def main():
     logger.info(f"📡 Kafka: {KAFKA_BOOTSTRAP_SERVERS}")
     logger.info(f"🗃️ MongoDB: {MONGODB_URL}")
     
+    # ========== BOOTSTRAP: Inizializza global_stats da dati storici ==========
+    bootstrap_global_stats()
+    
     spark = create_spark_session()
     spark.sparkContext.setLogLevel("WARN")
     
@@ -729,15 +934,24 @@ def main():
         .select(from_json(col("json_value"), event_schema).alias("data")) \
         .select("data.*")
     
-    # Trigger elaborazione ogni 5 secondi (sync quasi istantaneo)
-    query = parsed_stream.writeStream \
+    # ========== STREAM 1: User Stats (foreachBatch) ==========
+    user_stats_query = parsed_stream.writeStream \
         .foreachBatch(process_batch) \
         .outputMode("update") \
         .trigger(processingTime="1 second") \
+        .option("checkpointLocation", "/tmp/spark-checkpoints/user-stats") \
+        .queryName("user_stats_stream") \
         .start()
     
-    logger.info("✅ Streaming avviato. In attesa di eventi...")
-    query.awaitTermination()
+    # ========== STREAM 2: Global Trends (Bootstrap + Streaming) ==========
+    global_trends_query = start_global_trends_stream(spark, parsed_stream)
+    
+    logger.info("✅ Tutti gli stream avviati:")
+    logger.info("   📊 user_stats_stream: Statistiche utente (trigger 1s)")
+    logger.info("   🌍 global_trends_stream: Community Trends (bootstrap + streaming 30s)")
+    
+    # Attendi terminazione di entrambi gli stream
+    spark.streams.awaitAnyTermination()
 
 
 if __name__ == "__main__":
