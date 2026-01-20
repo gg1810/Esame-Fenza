@@ -64,7 +64,9 @@ movie_schema = StructType([
     StructField("duration", IntegerType(), True),
     StructField("director", StringType(), True),
     StructField("actors", StringType(), True),
-    StructField("date", StringType(), True)
+    StructField("date", StringType(), True),
+    StructField("old_rating", IntegerType(), True),  # Per UPDATE_RATING
+    StructField("new_rating", IntegerType(), True)   # Per UPDATE_RATING
 ])
 
 event_schema = StructType([
@@ -90,42 +92,244 @@ def create_spark_session():
 
 
 
-def process_partition(iterator):
+def process_partition_incremental(iterator):
     """
-    Funzione eseguita sui worker Spark (dentro foreachPartition).
-    Processa un iteratore di Row e scrive su MongoDB in bulk.
-    Ottimizzazione V2: READ BATCHING ($in query)
+    🚀 ANTIGRAVITY V4: Aggiornamento O(1) usando $inc atomico.
+    Non legge MAI la storia completa dell'utente.
+    Ogni evento aggiorna solo i contatori relativi a quel singolo film.
+    """
+    from pymongo import MongoClient
+    import pytz
+    import re
+    from datetime import datetime
+    
+    def clean_key(name):
+        """Pulisce i nomi per usarli come chiavi MongoDB (no punti, no $)."""
+        if not name:
+            return "Unknown"
+        return name.strip().replace(".", "_").replace("$", "_").replace(" ", "_")
+    
+    client = MongoClient(MONGODB_URL)
+    db = client.cinematch_db
+    
+    try:
+        all_rows = list(iterator)
+        if not all_rows:
+            return iter([])
+        
+        # Raccogli tutti i titoli unici per batch lookup catalogo
+        all_titles = set()
+        for row in all_rows:
+            if hasattr(row, 'events') and row.events:
+                for event in row.events:
+                    if hasattr(event, 'name') and event.name:
+                        all_titles.add(event.name)
+        
+        # BATCH LOOKUP CATALOGO (O(batch_size), non O(N_user_movies))
+        catalog_map = {}
+        if all_titles:
+            try:
+                all_titles_list = list(all_titles)
+                normalized_titles_list = [normalize_title(t) for t in all_titles_list]
+                
+                catalog_docs = list(db.movies_catalog.find({
+                    "$or": [
+                        {"title": {"$in": all_titles_list}},
+                        {"original_title": {"$in": all_titles_list}},
+                        {"normalized_title": {"$in": normalized_titles_list}},
+                        {"normalized_original_title": {"$in": normalized_titles_list}}
+                    ]
+                }))
+                
+                for d in catalog_docs:
+                    if d.get('title'): catalog_map[d.get('title')] = d
+                    if d.get('original_title'): catalog_map[d.get('original_title')] = d
+                    if d.get('normalized_title'): catalog_map[d.get('normalized_title')] = d
+                    if d.get('normalized_original_title'): catalog_map[d.get('normalized_original_title')] = d
+                
+                logger.info(f"   📚 [O(1)] Catalog lookup: {len(catalog_docs)} docs for {len(all_titles)} titles")
+            except Exception as e:
+                logger.error(f"❌ Catalog lookup error: {e}")
+        
+        # Processa ogni utente
+        for row in all_rows:
+            user_id = row.user_id
+            
+            if not hasattr(row, 'events') or not row.events:
+                continue
+            
+            # Per ogni evento nel batch dell'utente
+            for event in row.events:
+                movie_name = event.name if hasattr(event, 'name') else None
+                rating = event.rating if hasattr(event, 'rating') else None
+                event_type = event.event_type if hasattr(event, 'event_type') else "ADD"
+                event_date = event.date if hasattr(event, 'date') else None
+                
+                # DEBUG: Log per UPDATE_RATING
+                if event_type and "UPDATE" in str(event_type).upper():
+                    logger.info(f"🔍 DEBUG EVENT: type={event_type}, name={movie_name}, rating={rating}")
+                    logger.info(f"   hasattr old_rating: {hasattr(event, 'old_rating')}, value: {getattr(event, 'old_rating', 'N/A')}")
+                    logger.info(f"   hasattr new_rating: {hasattr(event, 'new_rating')}, value: {getattr(event, 'new_rating', 'N/A')}")
+                
+                if not movie_name:
+                    continue
+                
+                # Lookup catalogo per questo film
+                norm_title = normalize_title(movie_name)
+                catalog_info = catalog_map.get(movie_name) or catalog_map.get(norm_title) or {}
+                
+                # Estrai dati dal catalogo
+                director = catalog_info.get("director", "")
+                actors_str = catalog_info.get("actors", "")
+                genres = catalog_info.get("genres") or []
+                duration = catalog_info.get("duration", 0) or 0
+                
+                try:
+                    duration = int(duration)
+                except (ValueError, TypeError):
+                    duration = 0
+                
+                # ═══════════════════════════════════════════════════════════
+                # GESTIONE SPECIALE UPDATE_RATING
+                # Modifica SOLO rating_distribution e sum_ratings
+                # ═══════════════════════════════════════════════════════════
+                is_update_rating = event_type and "UPDATE_RATING" in str(event_type).upper()
+                
+                if is_update_rating:
+                    # Per UPDATE_RATING, usiamo campi speciali old_rating e new_rating
+                    old_rating = event.old_rating if hasattr(event, 'old_rating') else None
+                    new_rating = event.new_rating if hasattr(event, 'new_rating') else rating
+                    
+                    logger.info(f"🔄 UPDATE_RATING: user={user_id}, movie={movie_name}, old={old_rating}, new={new_rating}")
+                    
+                    inc_fields = {}
+                    
+                    # Decrementa vecchio rating
+                    if old_rating is not None and 1 <= old_rating <= 5:
+                        inc_fields[f"rating_distribution.{int(old_rating)}"] = -1
+                        inc_fields["sum_ratings"] = -old_rating
+                        logger.info(f"   ➖ Decrementing rating {old_rating}")
+                    else:
+                        logger.warning(f"   ⚠️ old_rating invalid or None: {old_rating}")
+                    
+                    # Incrementa nuovo rating
+                    if new_rating is not None and 1 <= new_rating <= 5:
+                        inc_fields[f"rating_distribution.{int(new_rating)}"] = 1
+                        inc_fields["sum_ratings"] = inc_fields.get("sum_ratings", 0) + new_rating
+                        logger.info(f"   ➕ Incrementing rating {new_rating}")
+                    else:
+                        logger.warning(f"   ⚠️ new_rating invalid or None: {new_rating}")
+                    
+                    logger.info(f"   📊 Final inc_fields: {inc_fields}")
+                    
+                    # NON tocchiamo: total_watched, genre_counts, monthly_counts, watch_time
+                    # perché il film è lo stesso, cambia solo il voto
+                    
+                else:
+                    # Logica standard ADD/DELETE
+                    is_delete = event_type and "DELETE" in str(event_type).upper()
+                    delta = -1 if is_delete else 1
+                    rating_val = rating if rating is not None else 0
+                    rating_delta = rating_val * delta
+                    duration_delta = duration * delta
+                    
+                    inc_fields = {
+                        "total_watched": delta,
+                        "sum_ratings": rating_delta,
+                        "watch_time_minutes": duration_delta,
+                    }
+                    
+                    # Rating distribution (1-5 stelle)
+                    if rating_val and 1 <= rating_val <= 5:
+                        inc_fields[f"rating_distribution.{int(rating_val)}"] = delta
+                    
+                    # Generi
+                    if isinstance(genres, str):
+                        genres = [g.strip() for g in genres.split(',') if g.strip()]
+                    for genre in genres:
+                        if genre:
+                            genre_key = clean_key(genre)
+                            inc_fields[f"genre_counts.{genre_key}"] = delta
+                    
+                    # Director
+                    if director and director.strip():
+                        directors_list = [d.strip() for d in re.split(r'[,|]', director) if d.strip()]
+                        for dir_name in directors_list[:2]:
+                            dir_key = clean_key(dir_name)
+                            inc_fields[f"director_stats.{dir_key}.count"] = delta
+                            if rating_val:
+                                inc_fields[f"director_stats.{dir_key}.sum_voti"] = rating_delta
+                    
+                    # Attori
+                    if actors_str:
+                        actors_list = [a.strip() for a in re.split(r'[,|]', actors_str) if a.strip()]
+                        for actor in actors_list[:5]:
+                            actor_key = clean_key(actor)
+                            inc_fields[f"actor_stats.{actor_key}.count"] = delta
+                            if rating_val:
+                                inc_fields[f"actor_stats.{actor_key}.sum_voti"] = rating_delta
+                    
+                    # Monthly counts (Nidificati: "monthly_counts.YYYY.MM")
+                    if event_date:
+                        try:
+                            year_key = event_date[:4]   # "2026"
+                            month_key = event_date[5:7] # "01"
+                            inc_fields[f"monthly_counts.{year_key}.{month_key}"] = delta
+                        except:
+                            pass
+                
+                # ═══════════════════════════════════════════════════════════
+                # ESEGUI UPDATE ATOMICO O(1)
+                # ═══════════════════════════════════════════════════════════
+                try:
+                    db.user_stats.update_one(
+                        {"user_id": user_id},
+                        {
+                            "$inc": inc_fields,
+                            "$set": {
+                                "updated_at": datetime.now(pytz.timezone('Europe/Rome')).isoformat(),
+                                "stats_version": "4.0_incremental"
+                            }
+                        },
+                        upsert=True
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Update error for {user_id}: {e}")
+        
+        logger.info(f"   ⚡ [O(1)] Processed {len(all_rows)} users incrementally")
+        
+    except Exception as e:
+        logger.error(f"❌ Partition processing error: {e}")
+    finally:
+        client.close()
+    
+    return iter([])
+
+
+def process_partition_legacy(iterator):
+    """
+    🐢 LEGACY V3: Funzione O(N) mantenuta per retrocompatibilità.
+    Legge TUTTI i film dell'utente e ricalcola le stats complete.
+    Usata solo per bootstrap o migrazione.
     """
     from pymongo import MongoClient, UpdateOne, DeleteOne
     import pytz
     from datetime import datetime
     
-    # Crea connessione per PARTIZIONE
     client = MongoClient(MONGODB_URL)
     db = client.cinematch_db
-    
-    # Parametri batching
     READ_BATCH_SIZE = 500
     
-    # Accumula user_ids e rows
-    user_rows_buffer = [] 
-    
     try:
-        # Converti iteratore in lista (necessario per batching, attenzione alla memoria ma le partizioni sono piccole)
         all_rows = list(iterator)
         if not all_rows:
             return iter([])
 
-        # Processa a blocchi di READ_BATCH_SIZE
         for i in range(0, len(all_rows), READ_BATCH_SIZE):
             chunk = all_rows[i : i + READ_BATCH_SIZE]
             user_ids_chunk = [r.user_id for r in chunk]
             
-            # --- BATCH READ MOVIES ---
-            # Recupera film per TUTTI gli utenti del chunk in UNA query
             movies_cursor = db.movies.find({"user_id": {"$in": user_ids_chunk}})
-            
-            # Raggruppa film per user_id in memoria e raccogli TUTTI i titoli per il catalogo
             movies_by_user = {}
             all_titles_set = set()
             
@@ -134,13 +338,9 @@ def process_partition(iterator):
                 if uid not in movies_by_user:
                     movies_by_user[uid] = []
                 movies_by_user[uid].append(m)
-                
                 if m.get('name'):
                     all_titles_set.add(m.get('name'))
             
-            # --- BATCH READ CATALOG ---
-            # Unica query al catalogo per tutti i film del chunk (max 500 utenti * N film)
-            # Ottimizzazione V3
             master_catalog_map = {}
             if all_titles_set:
                 try:
@@ -161,14 +361,10 @@ def process_partition(iterator):
                         if d.get('original_title'): master_catalog_map[d.get('original_title')] = d
                         if d.get('normalized_title'): master_catalog_map[d.get('normalized_title')] = d
                         if d.get('normalized_original_title'): master_catalog_map[d.get('normalized_original_title')] = d
-                        
-                    logger.info(f"   📚 Catalog Prefetch: Loaded {len(catalog_docs)} docs for {len(all_titles_set)} unique titles")
                 except Exception as e:
                     logger.error(f"❌ Catalog prefetch error: {e}")
 
-            # Preparazione Bulk Writes
             bulk_ops = []
-            
             for row in chunk:
                 user_id = row.user_id
                 user_movies = movies_by_user.get(user_id, [])
@@ -178,9 +374,7 @@ def process_partition(iterator):
                     continue
                 
                 try:
-                    # Calcola stats passando la mappa pre-caricata
                     stats = compute_user_stats(user_movies, db.movies_catalog, prefetched_map=master_catalog_map)
-                    
                     stats["user_id"] = user_id
                     stats["updated_at"] = datetime.now(pytz.timezone('Europe/Rome')).isoformat()
                     stats["source"] = "spark_streaming_bulk_v3"
@@ -193,11 +387,10 @@ def process_partition(iterator):
                 except Exception as e:
                     logger.error(f"❌ Error computing stats for {user_id}: {e}")
             
-            # Esegui Bulk Write per questo chunk
             if bulk_ops:
                 try:
                     db.user_stats.bulk_write(bulk_ops, ordered=False)
-                    logger.info(f"   ⚡ Processed batch chunk {len(bulk_ops)} users")
+                    logger.info(f"   ⚡ [Legacy] Processed {len(bulk_ops)} users")
                 except Exception as e:
                     logger.error(f"❌ Bulk write error: {e}")
 
@@ -207,6 +400,13 @@ def process_partition(iterator):
         client.close()
         
     return iter([])
+
+
+# Alias per retrocompatibilità
+# MIGRAZIONE COMPLETATA - Ora usiamo il sistema O(1) incrementale
+def process_partition(iterator):
+    """Wrapper che usa la versione O(1) incrementale (dopo migrazione)."""
+    return process_partition_incremental(iterator)
 
 
 
@@ -221,12 +421,16 @@ def process_batch(batch_df, batch_id):
     logger.info(f"Batch {batch_id}: partizionamento e scrittura su Mongo...")
     
     # Raggruppa per user_id (shuffle operation)
+    # IMPORTANTE: includiamo tutti i campi necessari per il processore incrementale
     user_events_df = batch_df.groupBy("user_id").agg(
         collect_list(struct(
             col("event_type"),
             col("movie.name").alias("name"),
             col("movie.year").alias("year"),
-            col("movie.rating").alias("rating")
+            col("movie.rating").alias("rating"),
+            col("movie.date").alias("date"),
+            col("movie.old_rating").alias("old_rating"),  # Per UPDATE_RATING
+            col("movie.new_rating").alias("new_rating")   # Per UPDATE_RATING
         )).alias("events")
     )
     
@@ -474,13 +678,21 @@ def write_global_trends_to_mongo(batch_df, batch_id):
             elif poster and not poster_cache.get(title):
                 poster_cache[title] = poster
             
-            # Aggiorna generi (solo per ADD/UPDATE)
-            if not (event_type and 'DELETE' in str(event_type).upper()):
-                genres = catalog_info.get("genres") or []
-                if isinstance(genres, str):
-                    genres = [g.strip() for g in genres.split(',')]
-                for g in genres:
-                    if g:
+            # Aggiorna generi (per ADD incrementa, per DELETE decrementa)
+            genres = catalog_info.get("genres") or []
+            if isinstance(genres, str):
+                genres = [g.strip() for g in genres.split(',')]
+            
+            is_delete = event_type and 'DELETE' in str(event_type).upper()
+            for g in genres:
+                if g:
+                    if is_delete:
+                        # DELETE: decrementa generi
+                        genre_counts[g] = max(0, genre_counts.get(g, 0) - delta)
+                        if genre_counts[g] == 0:
+                            del genre_counts[g]  # Rimuovi se zero
+                    else:
+                        # ADD/UPDATE: incrementa generi
                         genre_counts[g] += delta
         
         # 4. Ricalcola Top 10 con conteggi aggiornati

@@ -159,10 +159,6 @@ class UserRegister(BaseModel):
     province: Optional[str] = None  # e.g., "napoli"
     region: Optional[str] = None    # e.g., "Campania"
 
-class QuizSubmission(BaseModel):
-    correct: int
-    wrong: int
-    quiz_date: str
 
 # ============================================
 # STARTUP EVENT
@@ -439,51 +435,6 @@ async def register(user: UserRegister):
 # ============================================
 # QUIZ ENDPOINTS
 # ============================================
-@app.get("/quiz/questions")
-async def get_quiz_questions():
-    """Ottiene le domande del quiz giornaliero."""
-    return get_daily_questions(5)
-
-@app.post("/quiz/submit")
-async def submit_quiz(submission: QuizSubmission, current_user_id: str = Depends(get_current_user_id)):
-    """Registra il risultato del quiz."""
-    # Recupera dati utente attuali per verificare ultimo quiz
-    user = users_collection.find_one({"user_id": current_user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail="Utente non trovato")
-        
-    current_quiz = user.get("quiz", {})
-    
-    # Check if quiz was already taken today
-    if current_quiz.get("last_date") == submission.quiz_date:
-        # Return existing stats without updating
-        return {
-            "message": "Quiz già completato oggi", 
-            "stats": {
-                "correct": current_quiz.get("correct_count", 0), 
-                "wrong": current_quiz.get("wrong_count", 0)
-            },
-            "updated": False
-        }
-    
-    # Aggiorna statistiche quiz
-    quiz_correct = current_quiz.get("correct_count", 0) + submission.correct
-    quiz_wrong = current_quiz.get("wrong_count", 0) + submission.wrong
-    quiz_attempts = current_quiz.get("total_attempts", 0) + 1
-    
-    new_quiz_data = {
-        "correct_count": quiz_correct,
-        "wrong_count": quiz_wrong,
-        "total_attempts": quiz_attempts,
-        "last_date": submission.quiz_date
-    }
-    
-    users_collection.update_one(
-        {"user_id": current_user_id},
-        {"$set": {"quiz": new_quiz_data}}
-    )
-
-    return {"message": "Quiz registrato", "stats": {"correct": quiz_correct, "wrong": quiz_wrong}, "updated": True}
 
 @app.post("/login")
 async def login(user: UserAuth):
@@ -1481,14 +1432,11 @@ async def get_user_stats(current_user_id: str = Depends(get_current_user_id)):
     
     stats["sync_status"] = sync_status
     
-    # 5. Assicura campi quiz (Prende da users collection nested 'quiz')
-    user_doc = users_collection.find_one({"user_id": current_user_id}, {"quiz": 1}) or {}
-    quiz_data = user_doc.get("quiz", {})
-    
-    stats["quiz_correct_count"] = quiz_data.get("correct_count", 0)
-    stats["quiz_wrong_count"] = quiz_data.get("wrong_count", 0)
-    stats["quiz_total_attempts"] = quiz_data.get("total_attempts", 0)
-    stats["last_quiz_date"] = quiz_data.get("last_date")
+    # 5. Assicura campi quiz
+    stats.setdefault("quiz_correct_count", 0)
+    stats.setdefault("quiz_wrong_count", 0)
+    stats.setdefault("quiz_total_attempts", 0)
+    stats.setdefault("last_quiz_date", None)
 
     return mongo_to_dict(stats)
 
@@ -1524,8 +1472,30 @@ async def get_top_rated_movies(
         {"_id": 0, "user_id": 0}
     ).sort("rating", -1).limit(limit))
     
-    # Arricchisci con dati catalogo usando l'helper
-    return enrich_movie_data(movies)
+    # Arricchisci con dati catalogo
+    enriched = []
+    for m in movies:
+        title = m.get("name")
+        if title:
+            norm_title = normalize_title(title)
+            cat = movies_catalog.find_one({
+                "$or": [
+                    {"title": title},
+                    {"normalized_title": norm_title}
+                ]
+            }, {"poster_url": 1, "genres": 1, "director": 1, "duration": 1, "_id": 0})
+            
+            if cat:
+                m["poster_url"] = cat.get("poster_url") or STOCK_POSTER_URL
+                m["genres"] = cat.get("genres", [])
+                m["director"] = cat.get("director", "")
+                m["duration"] = cat.get("duration")
+            else:
+                m["poster_url"] = m.get("poster_url") or STOCK_POSTER_URL
+        
+        enriched.append(m)
+    
+    return enriched
 
 
 @app.get("/user-stats/recent")
@@ -1543,8 +1513,30 @@ async def get_recent_movies(
         {"_id": 0, "user_id": 0}
     ).sort("date", -1).limit(limit))
     
-    # Arricchisci con dati catalogo usando l'helper
-    return enrich_movie_data(movies)
+    # Arricchisci con dati catalogo
+    enriched = []
+    for m in movies:
+        title = m.get("name")
+        if title:
+            norm_title = normalize_title(title)
+            cat = movies_catalog.find_one({
+                "$or": [
+                    {"title": title},
+                    {"normalized_title": norm_title}
+                ]
+            }, {"poster_url": 1, "genres": 1, "director": 1, "duration": 1, "_id": 0})
+            
+            if cat:
+                m["poster_url"] = cat.get("poster_url") or STOCK_POSTER_URL
+                m["genres"] = cat.get("genres", [])
+                m["director"] = cat.get("director", "")
+                m["duration"] = cat.get("duration")
+            else:
+                m["poster_url"] = m.get("poster_url") or STOCK_POSTER_URL
+        
+        enriched.append(m)
+    
+    return enriched
 
 
 @app.get("/recommendations")
@@ -1578,49 +1570,6 @@ async def get_recommendations(current_user_id: str = Depends(get_current_user_id
             "message": f"Error generating recommendations: {str(e)}"
         }
 
-class MovieCreate(BaseModel):
-    name: str
-    year: Optional[int] = None
-    rating: int
-    date: Optional[str] = None
-    review: Optional[str] = None
-    imdb_id: Optional[str] = None # Link forte al catalogo
-
-@app.post("/movies")
-async def add_movie(movie: MovieCreate, background_tasks: BackgroundTasks, current_user_id: str = Depends(get_current_user_id)):
-    """Aggiunge un singolo film alla lista dei visti."""
-    
-    entry = {
-        "user_id": current_user_id,
-        "name": movie.name,
-        "year": movie.year,
-        "rating": movie.rating,
-        "date": movie.date or datetime.now(italy_tz).strftime("%Y-%m-%d"),
-        "review": movie.review,
-        "imdb_id": movie.imdb_id,
-        "added_at": datetime.now(italy_tz).isoformat()
-    }
-    
-    result = movies_collection.insert_one(entry)
-    
-    # Aggiorna utente (interazione)
-    users_collection.update_one(
-        {"user_id": current_user_id},
-        {"$set": {
-            "has_data": True,
-            "data_updated_at": datetime.now(italy_tz).isoformat()
-        }}
-    )
-    
-    # O(1) INCREMENTALE: Invia SOLO il film appena aggiunto
-    # NON inviare tutti i film (causa doppi incrementi!)
-    try:
-        kafka_producer = get_kafka_producer()
-        kafka_producer.send_movie_event("ADD", current_user_id, entry)
-    except Exception as e:
-        print(f"⚠️ Errore invio Kafka: {e}")
-    
-    return {"id": str(result.inserted_id), "message": "Film aggiunto correttamente"}
 
 
 @app.get("/movies")

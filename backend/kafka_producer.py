@@ -81,6 +81,8 @@ class MovieEventProducer:
                 "director": movie_data.get("director"),
                 "actors": movie_data.get("actors"),
                 "date": movie_data.get("date"),  # Data visione (importante per stats mensili)
+                "old_rating": movie_data.get("old_rating"),  # Per UPDATE_RATING
+                "new_rating": movie_data.get("new_rating"),  # Per UPDATE_RATING
             },
             "timestamp": datetime.now(pytz.timezone('Europe/Rome')).isoformat()
         }
@@ -102,38 +104,46 @@ class MovieEventProducer:
     
     def send_batch_event(self, event_type: str, user_id: str, movies: list) -> bool:
         """
-        Pubblica un evento batch per operazioni su più film.
-        Usato per import massivi o ricalcolo stats.
+        Pubblica eventi singoli per ogni film nel batch.
+        NOTA: Invia eventi nello STESSO FORMATO di send_movie_event per garantire
+        che il processore Spark incrementale O(1) possa gestirli uniformemente.
         """
         producer = self._get_producer()
         if not producer:
             return False
         
-        event = {
-            "event_type": f"BATCH_{event_type}",
-            "user_id": user_id,
-            "movies_count": len(movies),
-            "movies": [
-                {
-                    "name": m.get("name"),
-                    "year": m.get("year"),
-                    "rating": m.get("rating"),
-                    "genres": m.get("genres", []),
-                    "date": m.get("date"),
-                }
-                for m in movies
-            ],
-            "timestamp": datetime.now(pytz.timezone('Europe/Rome')).isoformat()
-        }
+        success_count = 0
         
-        try:
-            future = producer.send(self.TOPIC, key=user_id, value=event)
-            future.get(timeout=10)
-            logger.info(f"📤 Batch event {event_type} con {len(movies)} film per user {user_id}")
-            return True
-        except KafkaError as e:
-            logger.error(f"❌ Errore batch event: {e}")
-            return False
+        for movie in movies:
+            # Usa lo stesso formato di send_movie_event
+            event = {
+                "event_type": event_type,  # Es: "ADD", "BULK_IMPORT", "RECALCULATE"
+                "user_id": user_id,
+                "movie": {
+                    "name": movie.get("name"),
+                    "year": movie.get("year"),
+                    "rating": movie.get("rating"),
+                    "imdb_id": movie.get("imdb_id"),
+                    "genres": movie.get("genres", []),
+                    "duration": movie.get("duration"),
+                    "director": movie.get("director"),
+                    "actors": movie.get("actors"),
+                    "date": movie.get("date"),
+                },
+                "timestamp": datetime.now(pytz.timezone('Europe/Rome')).isoformat()
+            }
+            
+            try:
+                producer.send(self.TOPIC, key=user_id, value=event)
+                success_count += 1
+            except KafkaError as e:
+                logger.error(f"❌ Errore invio evento batch: {e}")
+        
+        # Flush per assicurarsi che tutti gli eventi siano inviati
+        producer.flush()
+        
+        logger.info(f"📤 Batch: inviati {success_count}/{len(movies)} eventi per user {user_id}")
+        return success_count > 0
     
     def flush(self):
         """Forza l'invio di tutti i messaggi in coda."""
