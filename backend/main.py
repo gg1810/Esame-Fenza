@@ -362,6 +362,13 @@ async def startup_event():
                 movies_collection.delete_many({"user_id": user_id})
                 movies_collection.insert_many(movies)
             
+            # RESET STATISTICHE: NECESSARIO PER EVITARE DOPPI CONTEGGI
+            # Poiché stiamo caricando l'intero storico (bulk), dobbiamo azzerare
+            # i contatori incrementali precedenti, altrimenti Spark sommerà i nuovi dati ai vecchi.
+            stats_collection.delete_one({"user_id": user_id})
+            db.user_affinities.delete_many({"user_id": user_id})
+            print(f"🧹 Stats + Affinities reset for {user_id} before BULK_IMPORT.")
+            
             # Pubblica eventi su Kafka per far calcolare le statistiche a Spark
             kafka_producer = get_kafka_producer()
             kafka_producer.send_batch_event("BULK_IMPORT", user_id, movies)
@@ -1044,15 +1051,13 @@ def process_missing_movies_background(titles_years: list, user_id: str):
                 
     print(f"✅ [Background] Aggiunti {added_count} nuovi film al catalogo.")
     
-    # 2. Triggera ricalcolo statistiche via Kafka/Spark se sono stati aggiunti film
+    # NOTA: NON inviamo più eventi RECALCULATE qui!
+    # Il BULK_IMPORT iniziale ha già inviato tutti i film a Spark.
+    # Inviare di nuovo causerebbe DUPLICAZIONE delle statistiche.
+    # Se servono i metadati aggiornati (director, actors, etc.), il prossimo
+    # evento singolo o un refresh manuale li utilizzerà dal catalogo aggiornato.
     if added_count > 0:
-        print("🔄 [Background] Triggering ricalcolo statistiche via Kafka/Spark...")
-        movies = list(movies_collection.find({"user_id": user_id}))
-        if movies:
-            # Pubblica evento su Kafka per far ricalcolare le statistiche a Spark
-            kafka_producer = get_kafka_producer()
-            kafka_producer.send_batch_event("RECALCULATE", user_id, movies)
-            print("✅ [Background] Evento inviato a Spark per ricalcolo statistiche.")
+        print(f"✅ [Background] Catalogo arricchito con {added_count} film. Le stats usano già i dati del BULK_IMPORT iniziale.")
 
 
 @app.post("/upload-csv")
@@ -1163,6 +1168,14 @@ async def upload_csv(
     if catalog_updates > 0:
         print(f"📊 Aggiornati {catalog_updates} film nel catalogo dai metadati del CSV.")
 
+    # RESET STATISTICHE: NECESSARIO PER EVITARE DOPPI CONTEGGI
+    # Poiché stiamo ricaricando l'intero storico (bulk), dobbiamo azzerare 
+    # i contatori incrementali precedenti, altrimenti Spark sommerà i nuovi dati ai vecchi.
+    stats_collection.delete_one({"user_id": current_user_id})
+    # V6: Reset anche user_affinities (struttura piatta)
+    db.user_affinities.delete_many({"user_id": current_user_id})
+    print(f"🧹 Stats + Affinities reset for {current_user_id} before bulk import.")
+
     # Pubblica batch di eventi su Kafka per Spark (invece di calculate_stats legacy)
     kafka_producer = get_kafka_producer()
     batch_published = kafka_producer.send_batch_event("BULK_IMPORT", current_user_id, movies)
@@ -1197,6 +1210,12 @@ async def recalculate_stats(current_user_id: str = Depends(get_current_user_id))
     
     if not movies:
         raise HTTPException(status_code=404, detail="Nessun film trovato")
+    
+    # RESET STATISTICHE PRIMA DI RECALCULATE per evitare duplicazioni
+    # Spark usa $inc incrementale, quindi dobbiamo partire da zero
+    stats_collection.delete_one({"user_id": current_user_id})
+    db.user_affinities.delete_many({"user_id": current_user_id})
+    print(f"🧹 Stats + Affinities reset for {current_user_id} before RECALCULATE.")
     
     # Pubblica batch su Kafka per far ricalcolare Spark
     kafka_producer = get_kafka_producer()
@@ -1304,8 +1323,88 @@ async def get_user_stats(current_user_id: str = Depends(get_current_user_id)):
     # Ore di visione
     watch_time_hours = (stats.get("watch_time_minutes", 0) or 0) // 60
     
-    # Genre counts -> genre_data (formattato per frontend)
-    genre_counts = stats.get("genre_counts", {})
+    # Rating distribution -> rating_chart_data
+    rating_dist = stats.get("rating_distribution", {})
+    rating_chart_data = [
+        {"rating": f"⭐{i}", "count": rating_dist.get(str(i), 0), "stars": i}
+        for i in range(1, 6)
+    ]
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # NUOVO V6: Leggi directors/actors/genres da user_affinities (struttura piatta)
+    # ═══════════════════════════════════════════════════════════════════════
+    affinities_collection = db.user_affinities
+    
+    # --- DIRECTORS ---
+    # Most Watched Directors (top 15 per count)
+    directors_cursor = list(affinities_collection.find(
+        {"user_id": current_user_id, "type": "director", "count": {"$gt": 0}}
+    ).sort("count", -1).limit(50))  # Fetch più per i threshold
+    
+    best_directors = []
+    for d in directors_cursor:
+        count = d.get("count", 0)
+        sum_v = d.get("sum_voti", 0)
+        if count > 0:
+            best_directors.append({
+                "name": d.get("name", d.get("name_key", "").replace("_", " ")),
+                "count": count,
+                "avg_rating": round(sum_v / count, 1) if count > 0 else 0
+            })
+    
+    # Ordina per avg_rating (per best_rated) 
+    best_directors_by_rating = sorted(best_directors, key=lambda x: (-x["avg_rating"], -x["count"]))
+    
+    # Formatta per threshold come atteso dal frontend
+    best_rated_directors = {
+        "1": best_directors_by_rating[:10],
+        "2": [d for d in best_directors_by_rating if d["count"] >= 2][:10],
+        "3": [d for d in best_directors_by_rating if d["count"] >= 3][:10],
+        "5": [d for d in best_directors_by_rating if d["count"] >= 5][:10]
+    }
+    
+    # Most watched (già ordinati per count dalla query)
+    most_watched_directors = sorted(best_directors, key=lambda x: -x["count"])[:15]
+    
+    # --- ACTORS ---
+    actors_cursor = list(affinities_collection.find(
+        {"user_id": current_user_id, "type": "actor", "count": {"$gt": 0}}
+    ).sort("count", -1).limit(50))
+    
+    best_actors = []
+    for a in actors_cursor:
+        count = a.get("count", 0)
+        sum_v = a.get("sum_voti", 0)
+        if count > 0:
+            best_actors.append({
+                "name": a.get("name", a.get("name_key", "").replace("_", " ")),
+                "count": count,
+                "avg_rating": round(sum_v / count, 1) if count > 0 else 0
+            })
+    
+    best_actors_by_rating = sorted(best_actors, key=lambda x: (-x["avg_rating"], -x["count"]))
+    
+    best_rated_actors = {
+        "1": best_actors_by_rating[:10],
+        "2": [a for a in best_actors_by_rating if a["count"] >= 2][:10],
+        "3": [a for a in best_actors_by_rating if a["count"] >= 3][:10],
+        "5": [a for a in best_actors_by_rating if a["count"] >= 5][:10]
+    }
+    most_watched_actors = sorted(best_actors, key=lambda x: -x["count"])[:15]
+    
+    # --- GENRES (ora da user_affinities) ---
+    # Fallback: se user_affinities ha generi, usali; altrimenti usa genre_counts da user_stats
+    genres_cursor = list(affinities_collection.find(
+        {"user_id": current_user_id, "type": "genre", "count": {"$gt": 0}}
+    ).sort("count", -1).limit(20))
+    
+    if genres_cursor:
+        # Usa generi da user_affinities (V6)
+        genre_counts = {g.get("name_key", g.get("name", "").replace(" ", "_")): g.get("count", 0) for g in genres_cursor}
+    else:
+        # Fallback a user_stats (retrocompatibilità V5 e precedenti)
+        genre_counts = stats.get("genre_counts", {})
+    
     total_genres = sum(genre_counts.values()) or 1
     
     # Colori generi
@@ -1330,58 +1429,6 @@ async def get_user_stats(current_user_id: str = Depends(get_current_user_id)):
     ]
         
     favorite_genre = sorted_genres[0][0].replace("_", " ") if sorted_genres else "Nessuno"
-    
-    # Rating distribution -> rating_chart_data
-    rating_dist = stats.get("rating_distribution", {})
-    rating_chart_data = [
-        {"rating": f"⭐{i}", "count": rating_dist.get(str(i), 0), "stars": i}
-        for i in range(1, 6)
-    ]
-        
-    # Director stats -> best_rated_directors (lazy calculation)
-    director_stats = stats.get("director_stats", {})
-    best_directors = []
-    for name, data in director_stats.items():
-        count = data.get("count", 0) or 0
-        sum_v = data.get("sum_voti", 0) or 0
-        if count > 0:
-            best_directors.append({
-                "name": name.replace("_", " "),
-                "count": count,
-                "avg_rating": round(sum_v / count, 1)
-            })
-    best_directors.sort(key=lambda x: (-x["avg_rating"], -x["count"]))
-        
-    # Formatta per threshold come atteso dal frontend
-    best_rated_directors = {
-        "1": best_directors[:10],
-        "2": [d for d in best_directors if d["count"] >= 2][:10],
-        "3": [d for d in best_directors if d["count"] >= 3][:10],
-        "5": [d for d in best_directors if d["count"] >= 5][:10]
-    }
-    most_watched_directors = sorted(best_directors, key=lambda x: -x["count"])[:15]
-        
-    # Actor stats -> best_rated_actors
-    actor_stats = stats.get("actor_stats", {})
-    best_actors = []
-    for name, data in actor_stats.items():
-        count = data.get("count", 0) or 0
-        sum_v = data.get("sum_voti", 0) or 0
-        if count > 0:
-            best_actors.append({
-                "name": name.replace("_", " "),
-                "count": count,
-                "avg_rating": round(sum_v / count, 1)
-            })
-    best_actors.sort(key=lambda x: (-x["avg_rating"], -x["count"]))
-    
-    best_rated_actors = {
-        "1": best_actors[:10],
-        "2": [a for a in best_actors if a["count"] >= 2][:10],
-        "3": [a for a in best_actors if a["count"] >= 3][:10],
-        "5": [a for a in best_actors if a["count"] >= 5][:10]
-    }
-    most_watched_actors = sorted(best_actors, key=lambda x: -x["count"])[:15]
         
     # Monthly counts -> year_data (ricostruisci formato frontend)
     # Struttura ora nidificata: { "2026": { "01": 5, "02": 3 } }
@@ -1434,12 +1481,16 @@ async def get_user_stats(current_user_id: str = Depends(get_current_user_id)):
     ]
     
     # IMPORTANTE: salva valori prima di sovrascrivere l'oggetto stats
-    original_stats_version = stats.get("stats_version", "4.0_incremental")
+    original_stats_version = stats.get("stats_version", "6.0_flat_affinities")
     original_updated_at = stats.get("updated_at")
     
-    # Calcolo lazy per stats mancanti
-    unique_directors_count = len(director_stats)
-    unique_actors_count = len(actor_stats)
+    # Calcolo conteggi unique da user_affinities
+    unique_directors_count = affinities_collection.count_documents(
+        {"user_id": current_user_id, "type": "director", "count": {"$gt": 0}}
+    )
+    unique_actors_count = affinities_collection.count_documents(
+        {"user_id": current_user_id, "type": "actor", "count": {"$gt": 0}}
+    )
     avg_duration = (stats.get("watch_time_minutes", 0) or 0) // total_watched if total_watched > 0 else 0
     
     # Costruisci risposta finale (formato compatibile frontend)
@@ -1465,7 +1516,7 @@ async def get_user_stats(current_user_id: str = Depends(get_current_user_id)):
         "recent_movies": [],     # Lazy: usa /user-stats/recent
         "stats_version": original_stats_version,
         "updated_at": original_updated_at,
-        "source": "incremental_v4"
+        "source": "flat_affinities_v6"
     }
     
     # B. Sync Status and Final formatting (Sync Spark asincrono)    
@@ -2337,12 +2388,20 @@ async def recalculate_user_stats(user_id: str):
     
     if not movies:
         stats_collection.delete_one({"user_id": user_id})
+        # V6: Reset anche user_affinities
+        db.user_affinities.delete_many({"user_id": user_id})
         # Reset count
         users_collection.update_one(
             {"user_id": user_id},
             {"$set": {"movies_count": 0, "has_data": False}}
         )
         return
+    
+    # RESET STATISTICHE PRIMA DI RECALCULATE per evitare duplicazioni
+    # Spark usa $inc incrementale, quindi dobbiamo partire da zero
+    stats_collection.delete_one({"user_id": user_id})
+    db.user_affinities.delete_many({"user_id": user_id})
+    print(f"🧹 Stats + Affinities reset for {user_id} before RECALCULATE.")
     
     # 1. Aggiorna movies_count utente
     users_collection.update_one(

@@ -94,11 +94,27 @@ def create_spark_session():
 
 def process_partition_incremental(iterator):
     """
-    🚀 ANTIGRAVITY V4: Aggiornamento O(1) usando $inc atomico.
-    Non legge MAI la storia completa dell'utente.
-    Ogni evento aggiorna solo i contatori relativi a quel singolo film.
+    🚀 ANTIGRAVITY V6: Struttura PIATTA con user_affinities.
+    
+    Ottimizzazioni rispetto a V5:
+    1. Directors, Actors, Genres → scritti in collezione separata user_affinities
+    2. user_stats contiene SOLO metriche globali (total_watched, sum_ratings, etc.)
+    3. Aggregazione in-memoria + bulk_write() per entrambe le collezioni
+    
+    Schema user_affinities:
+    {
+        "_id": "{user_id}_{type}_{name_key}",
+        "user_id": "u123",
+        "type": "director" | "actor" | "genre",
+        "name": "Christopher Nolan",
+        "name_key": "Christopher_Nolan",
+        "count": 5,
+        "sum_voti": 23
+    }
+    
+    Impatto: 10-100x più veloce, documenti user_stats più piccoli, query più efficienti
     """
-    from pymongo import MongoClient
+    from pymongo import MongoClient, UpdateOne
     import pytz
     import re
     from datetime import datetime
@@ -108,6 +124,11 @@ def process_partition_incremental(iterator):
         if not name:
             return "Unknown"
         return name.strip().replace(".", "_").replace("$", "_").replace(" ", "_")
+    
+    def merge_inc_fields(aggregated, new_fields):
+        """Merge incrementale: somma valori per chiavi uguali."""
+        for key, value in new_fields.items():
+            aggregated[key] = aggregated.get(key, 0) + value
     
     client = MongoClient(MONGODB_URL)
     db = client.cinematch_db
@@ -151,12 +172,21 @@ def process_partition_incremental(iterator):
             except Exception as e:
                 logger.error(f"❌ Catalog lookup error: {e}")
         
-        # Processa ogni utente
+        # ═══════════════════════════════════════════════════════════════════════
+        # AGGREGAZIONE IN-MEMORIA: Accumula $inc per user_stats e user_affinities
+        # ═══════════════════════════════════════════════════════════════════════
+        user_stats_inc = {}       # {user_id: {inc_field: value}} per user_stats
+        user_affinities_inc = {}  # {affinity_id: {count: X, sum_voti: Y, metadata}} per user_affinities
+        
         for row in all_rows:
             user_id = row.user_id
             
             if not hasattr(row, 'events') or not row.events:
                 continue
+            
+            # Inizializza aggregatore per questo utente
+            if user_id not in user_stats_inc:
+                user_stats_inc[user_id] = {}
             
             # Per ogni evento nel batch dell'utente
             for event in row.events:
@@ -191,49 +221,76 @@ def process_partition_incremental(iterator):
                 
                 # ═══════════════════════════════════════════════════════════
                 # GESTIONE SPECIALE UPDATE_RATING
-                # Modifica SOLO rating_distribution e sum_ratings
+                # Modifica SOLO rating_distribution e sum_ratings in user_stats
+                # NON tocca user_affinities (il count resta uguale)
                 # ═══════════════════════════════════════════════════════════
                 is_update_rating = event_type and "UPDATE_RATING" in str(event_type).upper()
                 
                 if is_update_rating:
-                    # Per UPDATE_RATING, usiamo campi speciali old_rating e new_rating
                     old_rating = event.old_rating if hasattr(event, 'old_rating') else None
                     new_rating = event.new_rating if hasattr(event, 'new_rating') else rating
                     
                     logger.info(f"🔄 UPDATE_RATING: user={user_id}, movie={movie_name}, old={old_rating}, new={new_rating}")
                     
-                    inc_fields = {}
+                    stats_inc = {}
                     
                     # Decrementa vecchio rating
                     if old_rating is not None and 1 <= old_rating <= 5:
-                        inc_fields[f"rating_distribution.{int(old_rating)}"] = -1
-                        inc_fields["sum_ratings"] = -old_rating
-                        logger.info(f"   ➖ Decrementing rating {old_rating}")
-                    else:
-                        logger.warning(f"   ⚠️ old_rating invalid or None: {old_rating}")
+                        stats_inc[f"rating_distribution.{int(old_rating)}"] = -1
+                        stats_inc["sum_ratings"] = -old_rating
                     
                     # Incrementa nuovo rating
                     if new_rating is not None and 1 <= new_rating <= 5:
-                        inc_fields[f"rating_distribution.{int(new_rating)}"] = 1
-                        inc_fields["sum_ratings"] = inc_fields.get("sum_ratings", 0) + new_rating
-                        logger.info(f"   ➕ Incrementing rating {new_rating}")
-                    else:
-                        logger.warning(f"   ⚠️ new_rating invalid or None: {new_rating}")
+                        stats_inc[f"rating_distribution.{int(new_rating)}"] = 1
+                        stats_inc["sum_ratings"] = stats_inc.get("sum_ratings", 0) + new_rating
                     
-                    logger.info(f"   📊 Final inc_fields: {inc_fields}")
+                    merge_inc_fields(user_stats_inc[user_id], stats_inc)
                     
-                    # NON tocchiamo: total_watched, genre_counts, monthly_counts, watch_time
-                    # perché il film è lo stesso, cambia solo il voto
+                    # Per UPDATE_RATING, aggiorna SOLO sum_voti nelle affinities (non count)
+                    rating_diff = (new_rating or 0) - (old_rating or 0)
+                    if rating_diff != 0:
+                        # Directors
+                        if director and director.strip():
+                            directors_list = [d.strip() for d in re.split(r'[,|]', director) if d.strip()]
+                            for dir_name in directors_list[:2]:
+                                dir_key = clean_key(dir_name)
+                                affinity_id = f"{user_id}_director_{dir_key}"
+                                if affinity_id not in user_affinities_inc:
+                                    user_affinities_inc[affinity_id] = {
+                                        "user_id": user_id, "type": "director", 
+                                        "name": dir_name, "name_key": dir_key,
+                                        "count": 0, "sum_voti": 0
+                                    }
+                                user_affinities_inc[affinity_id]["sum_voti"] += rating_diff
+                        
+                        # Actors
+                        if actors_str:
+                            actors_list = [a.strip() for a in re.split(r'[,|]', actors_str) if a.strip()]
+                            for actor in actors_list[:5]:
+                                actor_key = clean_key(actor)
+                                affinity_id = f"{user_id}_actor_{actor_key}"
+                                if affinity_id not in user_affinities_inc:
+                                    user_affinities_inc[affinity_id] = {
+                                        "user_id": user_id, "type": "actor",
+                                        "name": actor, "name_key": actor_key,
+                                        "count": 0, "sum_voti": 0
+                                    }
+                                user_affinities_inc[affinity_id]["sum_voti"] += rating_diff
                     
                 else:
+                    # ═══════════════════════════════════════════════════════════
                     # Logica standard ADD/DELETE
+                    # ═══════════════════════════════════════════════════════════
                     is_delete = event_type and "DELETE" in str(event_type).upper()
                     delta = -1 if is_delete else 1
                     rating_val = rating if rating is not None else 0
                     rating_delta = rating_val * delta
                     duration_delta = duration * delta
                     
-                    inc_fields = {
+                    # ┌─────────────────────────────────────────────────────────┐
+                    # │ USER_STATS: Metriche globali                            │
+                    # └─────────────────────────────────────────────────────────┘
+                    stats_inc = {
                         "total_watched": delta,
                         "sum_ratings": rating_delta,
                         "watch_time_minutes": duration_delta,
@@ -241,62 +298,136 @@ def process_partition_incremental(iterator):
                     
                     # Rating distribution (1-5 stelle)
                     if rating_val and 1 <= rating_val <= 5:
-                        inc_fields[f"rating_distribution.{int(rating_val)}"] = delta
+                        stats_inc[f"rating_distribution.{int(rating_val)}"] = delta
                     
-                    # Generi
+                    # Monthly counts (resta in user_stats, nidificato)
+                    if event_date:
+                        try:
+                            year_key = event_date[:4]
+                            month_key = event_date[5:7]
+                            stats_inc[f"monthly_counts.{year_key}.{month_key}"] = delta
+                        except:
+                            pass
+                    
+                    merge_inc_fields(user_stats_inc[user_id], stats_inc)
+                    
+                    # ┌─────────────────────────────────────────────────────────┐
+                    # │ USER_AFFINITIES: Directors (struttura piatta)           │
+                    # └─────────────────────────────────────────────────────────┘
+                    if director and director.strip():
+                        directors_list = [d.strip() for d in re.split(r'[,|]', director) if d.strip()]
+                        for dir_name in directors_list[:2]:
+                            dir_key = clean_key(dir_name)
+                            affinity_id = f"{user_id}_director_{dir_key}"
+                            
+                            if affinity_id not in user_affinities_inc:
+                                user_affinities_inc[affinity_id] = {
+                                    "user_id": user_id, "type": "director",
+                                    "name": dir_name, "name_key": dir_key,
+                                    "count": 0, "sum_voti": 0
+                                }
+                            user_affinities_inc[affinity_id]["count"] += delta
+                            user_affinities_inc[affinity_id]["sum_voti"] += rating_delta
+                    
+                    # ┌─────────────────────────────────────────────────────────┐
+                    # │ USER_AFFINITIES: Actors (struttura piatta)              │
+                    # └─────────────────────────────────────────────────────────┘
+                    if actors_str:
+                        actors_list = [a.strip() for a in re.split(r'[,|]', actors_str) if a.strip()]
+                        for actor in actors_list[:5]:
+                            actor_key = clean_key(actor)
+                            affinity_id = f"{user_id}_actor_{actor_key}"
+                            
+                            if affinity_id not in user_affinities_inc:
+                                user_affinities_inc[affinity_id] = {
+                                    "user_id": user_id, "type": "actor",
+                                    "name": actor, "name_key": actor_key,
+                                    "count": 0, "sum_voti": 0
+                                }
+                            user_affinities_inc[affinity_id]["count"] += delta
+                            user_affinities_inc[affinity_id]["sum_voti"] += rating_delta
+                    
+                    # ┌─────────────────────────────────────────────────────────┐
+                    # │ USER_AFFINITIES: Genres (struttura piatta)              │
+                    # └─────────────────────────────────────────────────────────┘
                     if isinstance(genres, str):
                         genres = [g.strip() for g in genres.split(',') if g.strip()]
                     for genre in genres:
                         if genre:
                             genre_key = clean_key(genre)
-                            inc_fields[f"genre_counts.{genre_key}"] = delta
-                    
-                    # Director
-                    if director and director.strip():
-                        directors_list = [d.strip() for d in re.split(r'[,|]', director) if d.strip()]
-                        for dir_name in directors_list[:2]:
-                            dir_key = clean_key(dir_name)
-                            inc_fields[f"director_stats.{dir_key}.count"] = delta
-                            if rating_val:
-                                inc_fields[f"director_stats.{dir_key}.sum_voti"] = rating_delta
-                    
-                    # Attori
-                    if actors_str:
-                        actors_list = [a.strip() for a in re.split(r'[,|]', actors_str) if a.strip()]
-                        for actor in actors_list[:5]:
-                            actor_key = clean_key(actor)
-                            inc_fields[f"actor_stats.{actor_key}.count"] = delta
-                            if rating_val:
-                                inc_fields[f"actor_stats.{actor_key}.sum_voti"] = rating_delta
-                    
-                    # Monthly counts (Nidificati: "monthly_counts.YYYY.MM")
-                    if event_date:
-                        try:
-                            year_key = event_date[:4]   # "2026"
-                            month_key = event_date[5:7] # "01"
-                            inc_fields[f"monthly_counts.{year_key}.{month_key}"] = delta
-                        except:
-                            pass
-                
-                # ═══════════════════════════════════════════════════════════
-                # ESEGUI UPDATE ATOMICO O(1)
-                # ═══════════════════════════════════════════════════════════
-                try:
-                    db.user_stats.update_one(
+                            affinity_id = f"{user_id}_genre_{genre_key}"
+                            
+                            if affinity_id not in user_affinities_inc:
+                                user_affinities_inc[affinity_id] = {
+                                    "user_id": user_id, "type": "genre",
+                                    "name": genre, "name_key": genre_key,
+                                    "count": 0, "sum_voti": 0
+                                }
+                            user_affinities_inc[affinity_id]["count"] += delta
+                            # Generi non hanno sum_voti
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # BULK WRITE 1: user_stats (metriche globali)
+        # ═══════════════════════════════════════════════════════════════════════
+        now_timestamp = datetime.now(pytz.timezone('Europe/Rome')).isoformat()
+        
+        if user_stats_inc:
+            bulk_ops = []
+            for user_id, aggregated_inc in user_stats_inc.items():
+                if aggregated_inc:
+                    bulk_ops.append(UpdateOne(
                         {"user_id": user_id},
                         {
-                            "$inc": inc_fields,
+                            "$inc": aggregated_inc,
                             "$set": {
-                                "updated_at": datetime.now(pytz.timezone('Europe/Rome')).isoformat(),
-                                "stats_version": "4.0_incremental"
+                                "updated_at": now_timestamp,
+                                "stats_version": "6.0_flat_affinities"
                             }
                         },
                         upsert=True
-                    )
+                    ))
+            
+            if bulk_ops:
+                try:
+                    result = db.user_stats.bulk_write(bulk_ops, ordered=False)
+                    logger.info(f"   ⚡ [V6] user_stats bulk: {result.modified_count} modified, {result.upserted_count} upserted")
                 except Exception as e:
-                    logger.error(f"❌ Update error for {user_id}: {e}")
+                    logger.error(f"❌ user_stats bulk write error: {e}")
         
-        logger.info(f"   ⚡ [O(1)] Processed {len(all_rows)} users incrementally")
+        # ═══════════════════════════════════════════════════════════════════════
+        # BULK WRITE 2: user_affinities (struttura piatta)
+        # ═══════════════════════════════════════════════════════════════════════
+        if user_affinities_inc:
+            affinity_ops = []
+            for affinity_id, data in user_affinities_inc.items():
+                # Solo se c'è un incremento effettivo
+                if data["count"] != 0 or data["sum_voti"] != 0:
+                    affinity_ops.append(UpdateOne(
+                        {"_id": affinity_id},
+                        {
+                            "$inc": {
+                                "count": data["count"],
+                                "sum_voti": data["sum_voti"]
+                            },
+                            "$set": {
+                                "user_id": data["user_id"],
+                                "type": data["type"],
+                                "name": data["name"],
+                                "name_key": data["name_key"],
+                                "updated_at": now_timestamp
+                            }
+                        },
+                        upsert=True
+                    ))
+            
+            if affinity_ops:
+                try:
+                    result = db.user_affinities.bulk_write(affinity_ops, ordered=False)
+                    logger.info(f"   ⚡ [V6] user_affinities bulk: {result.modified_count} modified, {result.upserted_count} upserted, {len(affinity_ops)} total")
+                except Exception as e:
+                    logger.error(f"❌ user_affinities bulk write error: {e}")
+        
+        logger.info(f"   ⚡ [V6] Processed {len(all_rows)} users with flat affinities structure")
         
     except Exception as e:
         logger.error(f"❌ Partition processing error: {e}")
@@ -789,11 +920,11 @@ def start_global_trends_stream(spark, parsed_stream):
         .foreachBatch(write_global_trends_to_mongo) \
         .outputMode("update") \
         .option("checkpointLocation", "/tmp/spark-checkpoints/today-trends") \
-        .trigger(processingTime="30 seconds") \
+        .trigger(processingTime="2 minutes") \
         .queryName("today_trends_stream") \
         .start()
     
-    logger.info("✅ Stream Global Trends avviato (trigger: 30s, watermark: 1h)")
+    logger.info("✅ Stream Global Trends avviato (trigger: 2min, watermark: 1h)")
     
     return global_trends_query
 
@@ -1111,11 +1242,13 @@ def compute_user_stats(movies, catalog_collection, prefetched_map=None):
         "favorite_genre": favorite_genre,
         "watch_time_hours": total_duration // 60,
         "avg_duration": round(total_duration / duration_count) if duration_count > 0 else 0,
+        # Nota: best_rated_* ora vengono caricati dall'API via user_affinities,
+        # ma li manteniamo qui come "snapshot" per la versione legacy se necessario.
         "best_rated_directors": best_rated_directors,
         "most_watched_directors": most_watched_directors,
         "best_rated_actors": best_rated_actors,
         "most_watched_actors": most_watched_actors,
-        "stats_version": "3.2"  # Schema ottimizzato - top lists strutturate
+        "stats_version": "6.0_flat_affinities"
     }
 
 
@@ -1150,7 +1283,7 @@ def main():
     user_stats_query = parsed_stream.writeStream \
         .foreachBatch(process_batch) \
         .outputMode("update") \
-        .trigger(processingTime="1 second") \
+        .trigger(processingTime="5 seconds") \
         .option("checkpointLocation", "/tmp/spark-checkpoints/user-stats") \
         .queryName("user_stats_stream") \
         .start()
@@ -1159,8 +1292,8 @@ def main():
     global_trends_query = start_global_trends_stream(spark, parsed_stream)
     
     logger.info("✅ Tutti gli stream avviati:")
-    logger.info("   📊 user_stats_stream: Statistiche utente (trigger 1s)")
-    logger.info("   🌍 global_trends_stream: Community Trends (bootstrap + streaming 30s)")
+    logger.info("   📊 user_stats_stream: Statistiche utente (trigger 5s)")
+    logger.info("   🌍 global_trends_stream: Community Trends (bootstrap + streaming 2min)")
     
     # Attendi terminazione di entrambi gli stream
     spark.streams.awaitAnyTermination()
