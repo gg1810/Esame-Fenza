@@ -285,6 +285,7 @@ async def startup_event():
     
     scheduler.add_job(scheduled_embedding_update, 'cron', hour=0, minute=30, timezone=italy_tz, id='embedding_update')
     
+
     # Quiz AI generation alle 03:00 (ogni notte)
     def scheduled_quiz_generation():
         """Genera 5 domande quiz giornaliere usando Ollama."""
@@ -1030,7 +1031,7 @@ async def get_scraper_progress():
 # ============================================
 # DATA ENDPOINTS
 # ============================================
-def process_missing_movies_background(titles_years: list, user_id: str, trigger_kafka_update: bool = False):
+def process_missing_movies_background(titles_years: list, user_id: str):
     """
     Task in background per cercare i film mancanti su TMDB 
     e poi aggiornare le statistiche dell'utente.
@@ -1074,15 +1075,13 @@ def process_missing_movies_background(titles_years: list, user_id: str, trigger_
                 
     print(f"✅ [Background] Aggiunti {added_count} nuovi film al catalogo.")
     
-    # 2. Triggera ricalcolo statistiche via Kafka/Spark se sono stati aggiunti film
+    # NOTA: NON inviamo più eventi RECALCULATE qui!
+    # Il BULK_IMPORT iniziale ha già inviato tutti i film a Spark.
+    # Inviare di nuovo causerebbe DUPLICAZIONE delle statistiche.
+    # Se servono i metadati aggiornati (director, actors, etc.), il prossimo
+    # evento singolo o un refresh manuale li utilizzerà dal catalogo aggiornato.
     if added_count > 0:
-        print("🔄 [Background] Triggering ricalcolo statistiche via Kafka/Spark...")
-        movies = list(movies_collection.find({"user_id": user_id}))
-        if movies:
-            # Pubblica evento su Kafka per far ricalcolare le statistiche a Spark
-            kafka_producer = get_kafka_producer()
-            kafka_producer.send_batch_event("RECALCULATE", user_id, movies)
-            print("✅ [Background] Evento inviato a Spark per ricalcolo statistiche.")
+        print(f"✅ [Background] Catalogo arricchito con {added_count} film. Le stats usano già i dati del BULK_IMPORT iniziale.")
 
 
 @app.post("/upload-csv")
@@ -1217,7 +1216,7 @@ async def upload_csv(
     
     # Avvia task in background per i film mancanti
     titles_years = list(set([(m["name"], m["year"]) for m in movies]))
-    background_tasks.add_task(process_missing_movies_background, titles_years, current_user_id, trigger_kafka_update=False)
+    background_tasks.add_task(process_missing_movies_background, titles_years, current_user_id)
     
     return {
         "status": "success",

@@ -188,20 +188,7 @@ def process_partition_incremental(iterator):
             if user_id not in user_stats_inc:
                 user_stats_inc[user_id] = {}
             
-            # ═══════════════════════════════════════════════════════════
-            # RILEVAMENTO BULK_IMPORT/RECALCULATE: Resetta stats prima di processare
-            # Questi eventi indicano un ricalcolo completo, non incrementale
-            # ═══════════════════════════════════════════════════════════
-            first_event = row.events[0] if row.events else None
-            first_event_type = first_event.event_type if first_event and hasattr(first_event, 'event_type') else ""
-            
-            if first_event_type and first_event_type.upper() in ["BULK_IMPORT", "RECALCULATE"]:
-                # Resetta le statistiche dell'utente PRIMA di applicare gli incrementi
-                logger.info(f"🔄 [{first_event_type}] Resetting stats for user {user_id} before recalculation")
-                db.user_stats.delete_one({"user_id": user_id})
-            
             # Per ogni evento nel batch dell'utente
-
             for event in row.events:
                 movie_name = event.name if hasattr(event, 'name') else None
                 rating = event.rating if hasattr(event, 'rating') else None
