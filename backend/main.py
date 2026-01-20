@@ -262,6 +262,29 @@ async def startup_event():
     italy_tz = pytz.timezone('Europe/Rome')
     scheduler.add_job(scheduled_cinema_pipeline, 'cron', hour=0, minute=0, timezone=italy_tz, id='cinema_pipeline')
     
+    # Incremental Embedding Update alle 00:30 (dopo aggiornamento film)
+    def scheduled_embedding_update():
+        """Aggiorna embeddings per i nuovi film aggiunti a mezzanotte."""
+        import subprocess
+        try:
+            print("🧬 [Embeddings] Avvio aggiornamento incrementale...")
+            result = subprocess.run(
+                ["python", "embedding_and_faiss/incremental_embedding_update.py"],
+                cwd="/app",
+                capture_output=True,
+                text=True,
+                timeout=3600  # Max 1 ora
+            )
+            if result.returncode == 0:
+                print("✅ [Embeddings] Aggiornamento completato.")
+                print(result.stdout)
+            else:
+                print(f"❌ [Embeddings] Errore: {result.stderr}")
+        except Exception as e:
+            print(f"❌ [Embeddings] Errore aggiornamento: {e}")
+    
+    scheduler.add_job(scheduled_embedding_update, 'cron', hour=0, minute=30, timezone=italy_tz, id='embedding_update')
+    
     # Quiz AI generation alle 03:00 (ogni notte)
     def scheduled_quiz_generation():
         """Genera 5 domande quiz giornaliere usando Ollama."""
