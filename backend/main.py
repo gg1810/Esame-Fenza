@@ -27,6 +27,7 @@ from kafka_producer import get_kafka_producer
 from YoutubeComments import get_upcoming_movie_with_trailer
 from YoutubeComments2 import get_latest_comment_for_trailer
 from YoutubeComments3 import get_trailer_comments
+from YoutubeComments5 import get_live_comments_for_trailer, get_live_comment_at, start_live_comments_streaming, stop_live_comments_streaming
 
 # ============================================
 # APP CONFIGURATION
@@ -682,6 +683,69 @@ async def get_trailer_comments_endpoint(max_comments: int = 5):
             "data": comments,
             "count": len(comments)
         }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.get("/live-trailer-comments")
+async def get_live_trailer_comments_endpoint():
+    """Ottiene gli ultimi 5 commenti live dal trailer usando Spark Structured Streaming."""
+    try:
+        # Prima ottieni i dati del film per avere l'URL del trailer
+        movie_data = get_upcoming_movie_with_trailer()
+        if not movie_data or not movie_data.get("trailer_url"):
+            return {
+                "status": "not_found",
+                "message": "Nessun trailer disponibile"
+            }
+        
+        # Ottieni i commenti live dal buffer streaming
+        result = get_live_comments_for_trailer(movie_data["trailer_url"])
+        
+        return {
+            "status": result["status"],
+            "data": result["comments"],
+            "count": result["count"],
+            "streaming_active": result["streaming_active"]
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.get("/live-trailer-comment/{index}")
+async def get_live_trailer_comment_at_index(index: int):
+    """Ottiene un singolo commento live all'indice specificato (0-4)."""
+    try:
+        # Valida l'indice
+        if index < 0 or index > 4:
+            return {
+                "status": "error",
+                "message": "Indice deve essere tra 0 e 4"
+            }
+        
+        # Prima assicurati che lo streaming sia attivo
+        movie_data = get_upcoming_movie_with_trailer()
+        if movie_data and movie_data.get("trailer_url"):
+            start_live_comments_streaming(movie_data["trailer_url"])
+        
+        # Ottieni il commento all'indice
+        comment = get_live_comment_at(index)
+        
+        if comment:
+            return {
+                "status": "success",
+                "data": comment,
+                "index": index
+            }
+        else:
+            return {
+                "status": "not_found",
+                "message": f"Nessun commento all'indice {index}"
+            }
     except Exception as e:
         return {
             "status": "error",

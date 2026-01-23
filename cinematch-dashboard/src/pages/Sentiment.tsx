@@ -1,16 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { sentimentPosts } from '../data/mockData';
 import './Sentiment.css';
-
-const topKeywords = [
-    { word: 'visuals', count: 1250 },
-    { word: 'soundtrack', count: 980 },
-    { word: 'amazing', count: 875 },
-    { word: 'epic', count: 720 },
-    { word: 'cinematography', count: 650 },
-    { word: 'Timothée', count: 590 },
-];
 
 interface MovieData {
     title: string;
@@ -35,6 +24,13 @@ export function Sentiment() {
     const [error, setError] = useState<string | null>(null);
     const [commentError, setCommentError] = useState<string | null>(null);
     const [commentsError, setCommentsError] = useState<string | null>(null);
+
+    // State per i commenti live con navigazione
+    const [liveComments, setLiveComments] = useState<CommentData[]>([]);
+    const [liveCommentsLoading, setLiveCommentsLoading] = useState(true);
+    const [liveCommentsError, setLiveCommentsError] = useState<string | null>(null);
+    const [currentLiveIndex, setCurrentLiveIndex] = useState(0);
+    const [streamingActive, setStreamingActive] = useState(false);
 
     useEffect(() => {
         const fetchMovieData = async () => {
@@ -91,18 +87,35 @@ export function Sentiment() {
             }
         };
 
+        const fetchLiveComments = async () => {
+            try {
+                const response = await fetch('http://localhost:8000/live-trailer-comments');
+                const result = await response.json();
+
+                if (result.status === 'success' && result.data) {
+                    setLiveComments(result.data);
+                    setStreamingActive(result.streaming_active || false);
+                } else {
+                    setLiveCommentsError(result.message || 'Nessun commento live trovato');
+                }
+            } catch (err) {
+                setLiveCommentsError('Errore di connessione al server');
+                console.error('Error fetching live comments:', err);
+            } finally {
+                setLiveCommentsLoading(false);
+            }
+        };
+
         fetchMovieData();
         fetchCommentData();
         fetchCommentsData();
-    }, []);
+        fetchLiveComments();
 
-    const getSentimentColor = (sentiment: string) => {
-        switch (sentiment) {
-            case 'positive': return '#00c853';
-            case 'negative': return '#ef4444';
-            default: return '#ffc107';
-        }
-    };
+        // Polling per aggiornare i commenti live ogni 30 secondi
+        const liveInterval = setInterval(fetchLiveComments, 30000);
+
+        return () => clearInterval(liveInterval);
+    }, []);
 
     const formatDate = (dateStr: string) => {
         const date = new Date(dateStr);
@@ -123,6 +136,21 @@ export function Sentiment() {
             minute: '2-digit'
         });
     };
+
+    // Navigazione commenti live
+    const goToPreviousComment = () => {
+        setCurrentLiveIndex((prev) => (prev > 0 ? prev - 1 : prev));
+    };
+
+    const goToNextComment = () => {
+        setCurrentLiveIndex((prev) => (prev < liveComments.length - 1 ? prev + 1 : prev));
+    };
+
+    const goToComment = (index: number) => {
+        setCurrentLiveIndex(index);
+    };
+
+    const currentLiveComment = liveComments[currentLiveIndex];
 
     return (
         <div className="sentiment-page">
@@ -200,6 +228,81 @@ export function Sentiment() {
             </div>
 
             <div className="charts-grid">
+                <div className="chart-card live-comments-card">
+                    <h3>
+                        🔴 Commenti Live (Spark Streaming)
+                        {streamingActive && <span className="streaming-indicator"> ● LIVE</span>}
+                    </h3>
+                    {liveCommentsLoading ? (
+                        <div className="comment-loading">
+                            <span>Caricamento commenti live...</span>
+                        </div>
+                    ) : liveCommentsError ? (
+                        <div className="comment-error">
+                            <span>⚠️ {liveCommentsError}</span>
+                        </div>
+                    ) : liveComments.length === 0 ? (
+                        <div className="comment-error">
+                            <span>Nessun commento live disponibile</span>
+                        </div>
+                    ) : (
+                        <div className="live-comment-viewer">
+                            <div className="live-comment-content">
+                                {currentLiveComment && (
+                                    <>
+                                        <div className="comment-author">
+                                            <span className="author-icon">👤</span>
+                                            <span className="author-name">{currentLiveComment.author}</span>
+                                        </div>
+                                        <div className="comment-date">
+                                            <span className="date-icon">📅</span>
+                                            <span className="date-value">{formatDateTime(currentLiveComment.published_at)}</span>
+                                        </div>
+                                        <div className="comment-text live-comment-text">
+                                            <p>"{currentLiveComment.text}"</p>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
+                            <div className="live-comment-navigation">
+                                <button
+                                    className="nav-arrow nav-prev"
+                                    onClick={goToPreviousComment}
+                                    disabled={currentLiveIndex === 0}
+                                    aria-label="Commento precedente"
+                                >
+                                    ◀
+                                </button>
+
+                                <div className="pagination-dots">
+                                    {liveComments.map((_, index) => (
+                                        <button
+                                            key={index}
+                                            className={`dot ${index === currentLiveIndex ? 'active' : ''}`}
+                                            onClick={() => goToComment(index)}
+                                            aria-label={`Vai al commento ${index + 1}`}
+                                        />
+                                    ))}
+                                </div>
+
+                                <button
+                                    className="nav-arrow nav-next"
+                                    onClick={goToNextComment}
+                                    disabled={currentLiveIndex === liveComments.length - 1}
+                                    aria-label="Commento successivo"
+                                >
+                                    ▶
+                                </button>
+                            </div>
+
+                            <div className="live-comment-counter">
+                                {currentLiveIndex + 1} / {liveComments.length}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
                 <div className="chart-card comment-card">
                     <h3>📈 Ultimo Commento al Trailer</h3>
                     {commentLoading ? (
@@ -229,25 +332,6 @@ export function Sentiment() {
                             <span>Nessun commento disponibile</span>
                         </div>
                     )}
-                </div>
-
-                <div className="chart-card">
-                    <h3>🔤 Prova</h3>
-                    <ResponsiveContainer width="100%" height={250}>
-                        <BarChart data={topKeywords} layout="vertical">
-                            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                            <XAxis type="number" stroke="#808080" />
-                            <YAxis dataKey="word" type="category" stroke="#808080" width={100} />
-                            <Tooltip
-                                contentStyle={{
-                                    background: '#222',
-                                    border: '1px solid #333',
-                                    borderRadius: '8px'
-                                }}
-                            />
-                            <Bar dataKey="count" fill="#0033A0" radius={[0, 4, 4, 0]} />
-                        </BarChart>
-                    </ResponsiveContainer>
                 </div>
             </div>
 

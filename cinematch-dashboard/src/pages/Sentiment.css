@@ -400,3 +400,127 @@
     font-style: italic;
     margin: 0;
 }
+
+/* Live Comments Card Styles */
+.live-comments-card {
+    min-height: 250px;
+}
+
+.live-comments-card h3 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.streaming-indicator {
+    color: #ff0000;
+    font-size: 0.85rem;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.4;
+    }
+}
+
+.live-comment-viewer {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.live-comment-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 0;
+    min-height: 150px;
+}
+
+.live-comment-text {
+    border-left-color: #ff0000;
+}
+
+.live-comment-text p {
+    max-height: 100px;
+    overflow-y: auto;
+}
+
+.live-comment-navigation {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 16px 0;
+    border-top: 1px solid var(--border-color);
+    margin-top: auto;
+}
+
+.nav-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    background: var(--glass-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 50%;
+    color: var(--text-primary);
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.nav-arrow:hover:not(:disabled) {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: white;
+    transform: scale(1.1);
+}
+
+.nav-arrow:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.pagination-dots {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--border-color);
+    border: none;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.dot:hover {
+    background: var(--text-secondary);
+    transform: scale(1.2);
+}
+
+.dot.active {
+    background: #ff0000;
+    transform: scale(1.3);
+    box-shadow: 0 0 8px rgba(255, 0, 0, 0.5);
+}
+
+.live-comment-counter {
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    padding-bottom: 8px;
+}
