@@ -53,12 +53,17 @@
     gap: 24px;
 }
 
-.mood-movie-wrapper {
-    position: relative;
+.mood-movies-grid>div {
     animation: fadeIn 0.5s ease forwards;
     opacity: 0;
+    cursor: pointer;
+    transition: transform 0.2s ease;
     display: flex;
-    flex-direction: column;
+}
+
+.mood-movies-grid>div:hover {
+    transform: scale(1.03);
+    z-index: 10;
 }
 
 .mood-match-indicator {
