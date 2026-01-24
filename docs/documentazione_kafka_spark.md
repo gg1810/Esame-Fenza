@@ -180,7 +180,205 @@ event_schema = StructType([
                                                └─────────────────────┘
 ```
 
+### Diagramma di Sequenza: Aggiunta Film
+
+Il diagramma seguente mostra il flusso **end-to-end** quando un utente aggiunge un film:
+
+#### 📊 Schema Visivo del Flusso
+
+![Schema Flusso Kafka-Spark](../assets/schema_flusso_kafka_spark.png)
+
+> [!NOTE]
+> **Timing del sistema:**
+> - **User Stats Stream**: trigger ogni **5 secondi**
+> - **Global Trends Stream**: trigger ogni **2 minuti** (stream separato)
+> - Spark esegue **batch lookup** su `movies_catalog` per arricchimento dati
+
+#### Diagramma di Sequenza
+
+```
+┌────────┐   ┌──────────┐   ┌─────────────┐   ┌───────┐   ┌───────┐   ┌─────────┐
+│ Utente │   │ Frontend │   │ Backend API │   │ Kafka │   │ Spark │   │ MongoDB │
+└────┬───┘   └────┬─────┘   └──────┬──────┘   └───┬───┘   └───┬───┘   └────┬────┘
+     │            │                │               │           │            │
+     │  Clicca "Aggiungi Film"     │               │           │            │
+     │───────────>│                │               │           │            │
+     │            │                │               │           │            │
+     │            │  POST /movies  │               │           │            │
+     │            │───────────────>│               │           │            │
+     │            │                │                           │            │
+     │            │                │──────────────────────────────────────>│
+     │            │                │  ① insert_one() in 'movies'           │
+     │            │                │                           │            │
+     │            │                │──────────────>│           │            │
+     │            │                │  ② send_movie_event('ADD')│            │
+     │            │                │               │           │            │
+     │            │ {"status":"ok"}│               │           │            │
+     │            │<───────────────│               │           │            │
+     │   Film     │                │               │           │            │
+     │  aggiunto! │                │               │           │            │
+     │<───────────│                │               │           │            │
+     │            │                │               │           │            │
+     │  ┌─────────────────────────────────────────────────────────────────┐│
+     │  │ Dashboard mostra "syncing..." mentre attende elaborazione Spark ││
+     │  └─────────────────────────────────────────────────────────────────┘│
+     │            │                │               │           │            │
+     │            │                │               │ ┌─────────────────────┐│
+     │            │                │               │ │ ③ SPARK CONSUMA     ││
+     │            │                │               │ │  trigger: 5 secondi ││
+     │            │                │               │ └─────────────────────┘│
+     │            │                │               │           │            │
+     │            │                │               │  Batch di │            │
+     │            │                │               │  eventi   │            │
+     │            │                │               │──────────>│            │
+     │            │                │               │           │            │
+     │            │                │               │           │ ④ Batch    │
+     │            │                │               │           │   Lookup   │
+     │            │                │               │           │   catalogo │
+     │            │                │               │           │ ──────────>│
+     │            │                │               │           │ (director, │
+     │            │                │               │           │  actors,   │
+     │            │                │               │           │  genres,   │
+     │            │                │               │           │  duration) │
+     │            │                │               │           │<──────────│
+     │            │                │               │           │            │
+     │            │                │               │           │ ⑤ $inc su  │
+     │            │                │               │           │ user_stats │
+     │            │                │               │           │ ──────────>│
+     │            │                │               │           │            │
+     │            │                │               │           │ ⑥ $inc su  │
+     │            │                │               │           │ user_      │
+     │            │                │               │           │ affinities │
+     │            │                │               │           │ ──────────>│
+     │            │                │               │           │            │
+     │            │                │               │ ┌─────────────────────┐│
+     │            │                │               │ │ ⑦ GLOBAL TRENDS     ││
+     │            │                │               │ │  (STREAM SEPARATO)  ││
+     │            │                │               │ │  trigger: 2 minuti  ││
+     │            │                │               │ └─────────────────────┘│
+     │            │                │               │           │ Update     │
+     │            │                │               │           │ global_    │
+     │            │                │               │           │ stats      │
+     │            │                │               │           │ ──────────>│
+     │            │                │               │           │            │
+     │            │                │               │           │            │
+     │  Refresh Dashboard          │               │           │            │
+     │───────────>│                │               │           │            │
+     │            │ GET /user-stats│               │           │            │
+     │            │───────────────>│               │           │            │
+     │            │                │ ⑧ Query user_stats          │          │
+     │            │                │   + user_affinities         │          │
+     │            │                │───────────────────────────────────────>│
+     │            │                │<───────────────────────────────────────│
+     │            │                │               │           │            │
+     │            │ Stats complete │               │           │            │
+     │            │ aggiornate     │               │           │            │
+     │            │<───────────────│               │           │            │
+     │ Dashboard  │                │               │           │            │
+     │ aggiornata │                │               │           │            │
+     │<───────────│                │               │           │            │
+```
+
+#### Legenda Step-by-Step
+
+| Step | Componente | Azione | Latenza |
+|------|------------|--------|---------|
+| ① | Backend → MongoDB | `insert_one()` in collezione `movies` | ~10-50ms |
+| ② | Backend → Kafka | `send_movie_event('ADD', user_id, movie_data)` | ~5-20ms |
+| ③ | Kafka → Spark | Spark consuma batch (trigger **5 secondi**) | 0-5s |
+| ④ | Spark → MongoDB | Batch lookup `movies_catalog` per arricchimento | ~20-100ms |
+| ⑤ | Spark → MongoDB | `$inc` atomico su `user_stats` | ~10-30ms |
+| ⑥ | Spark → MongoDB | `$inc` atomico su `user_affinities` | ~10-30ms |
+| ⑦ | Spark → MongoDB | Update `global_stats` (stream separato, **2 minuti**) | - |
+| ⑧ | API → MongoDB | Query diretta `user_stats` + `user_affinities` | ~20-50ms |
+
+> [!NOTE]
+> **Timing del Sistema:**
+> - **User Stats Stream**: trigger ogni **5 secondi**
+> - **Global Trends Stream**: trigger ogni **2 minuti** (stream separato)
+> - **Latenza totale visibilità frontend**: ~10-30 secondi
+
 ### Flusso di Elaborazione Dettagliato
+
+> [!NOTE]
+> Il diagramma seguente mostra il flusso **completo** dall'azione utente all'aggiornamento delle statistiche, con i timing reali del sistema.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 👤 Utente
+    participant FE as 🖥️ Frontend
+    participant API as ⚙️ Backend API
+    participant K as 📨 Kafka
+    participant S as ⚡ Spark
+    participant M as 🗃️ MongoDB
+
+    %% === FASE 1: Azione Utente ===
+    rect rgb(240, 248, 255)
+        Note over U,API: FASE 1 - Azione Utente (sincrona, ~100ms)
+        U->>FE: Clicca "Aggiungi Film"
+        FE->>API: POST /movies
+        API->>M: insert_one() in 'movies'
+        API->>K: send_movie_event('ADD')
+        API-->>FE: {"status": "ok"}
+        FE-->>U: ✓ Film aggiunto!
+    end
+
+    %% === FASE 2: Dashboard mostra syncing ===
+    rect rgb(255, 250, 205)
+        Note over FE: Dashboard mostra "syncing..."
+        FE->>FE: Polling /user-stats o refresh
+    end
+
+    %% === FASE 3: Spark Processing ===
+    rect rgb(230, 255, 230)
+        Note over K,M: FASE 2 - Elaborazione Asincrona (ogni 5 secondi)
+        
+        Note right of S: ⏱️ Trigger: ogni 5 secondi
+        K->>S: Batch di eventi
+        S->>M: Batch lookup movies_catalog
+        M-->>S: director, actors, genres, duration
+        
+        S->>S: Calcola delta incrementali
+        
+        par Scritture parallele
+            S->>M: $inc su user_stats
+            S->>M: $inc su user_affinities
+        end
+    end
+
+    %% === FASE 4: Global Trends (separato) ===
+    rect rgb(255, 240, 245)
+        Note over S,M: FASE 3 - Global Trends (ogni 2 minuti)
+        Note right of S: ⏱️ Trigger: ogni 2 minuti
+        S->>M: Update global_stats (top_movies, trending_genres)
+    end
+
+    %% === FASE 5: Lettura Statistiche ===
+    rect rgb(240, 248, 255)
+        Note over U,M: FASE 4 - Lettura Statistiche (~10-30s dopo)
+        FE->>API: GET /user-stats
+        API->>M: Query user_stats + user_affinities
+        M-->>API: Dati aggiornati
+        API-->>FE: Stats complete aggiornate
+        FE-->>U: 📊 Dashboard aggiornata!
+    end
+```
+
+#### Legenda Temporale
+
+| Fase | Descrizione | Latenza |
+|------|-------------|---------|
+| **1** | Azione utente → Risposta API | ~100-200ms (sincrona) |
+| **2** | Kafka → Spark consume | < 1 secondo |
+| **3** | Spark batch processing (user_stats) | Ogni 5 secondi |
+| **4** | Spark batch processing (global_stats) | Ogni 2 minuti |
+| **5** | Visibilità frontend | ~10-30 secondi totali |
+
+> [!IMPORTANT]
+> La risposta `{"status": "ok"}` viene restituita **immediatamente** dopo l'inserimento in MongoDB e la pubblicazione su Kafka. L'utente non deve attendere l'elaborazione Spark.
+
+---
 
 1. **Evento Generato (Backend)**
    - Utente esegue azione (add/delete/update film)
