@@ -306,8 +306,21 @@ async def startup_event():
     
     scheduler.add_job(scheduled_quiz_generation, 'cron', hour=2, minute=50, timezone=italy_tz, id='quiz_generation')
     
+    # Mood Recommendations alle 02:00 (ogni notte)
+    def scheduled_mood_generation():
+        """Genera raccomandazioni giornaliere per mood."""
+        try:
+            print("🎭 [Mood] Avvio generazione raccomandazioni per mood...")
+            from mood import generate_mood_recommendations
+            generate_mood_recommendations()
+            print("✅ [Mood] Generazione completata.")
+        except Exception as e:
+            print(f"❌ [Mood] Errore generazione: {e}")
+    
+    scheduler.add_job(scheduled_mood_generation, 'cron', hour=2, minute=0, timezone=italy_tz, id='mood_generation')
+    
     scheduler.start()
-    print("🕒 Scheduler avviato: Movie Updater alle 01:00 + Cinema Pipeline a mezzanotte + Quiz AI alle 02:50 (ora italiana).")
+    print("🕒 Scheduler avviato: Movie Updater alle 01:00 + Cinema Pipeline a mezzanotte + Quiz AI alle 02:50 + Mood Recommendations alle 02:00 (ora italiana).")
     
     # Eseguiamo anche un update SUBITO all'avvio in background (con lock)
     import threading
@@ -415,6 +428,34 @@ async def startup_event():
         print(f"✅ Dati già presenti per {user_id}: {existing_stats.get('total_watched', 0)} film")
     else:
         print(f"⚠️ File CSV non trovato: {csv_path}")
+    
+    # --------------------------------------------
+    # MOOD RECOMMENDATIONS BOOTSTRAP
+    # --------------------------------------------
+    # Se la collezione mood_movies è vuota, genera immediatamente i dati
+    # senza aspettare le 2:00 di notte
+    try:
+        mood_doc = db["mood_movies"].find_one({"_id": "daily_mood_recommendations"})
+        
+        if not mood_doc:
+            print("🎭 [Startup] Collezione mood_movies vuota. Avvio generazione immediata...")
+            from mood import generate_mood_recommendations
+            
+            # Esegui in background per non bloccare lo startup
+            def bootstrap_mood():
+                try:
+                    generate_mood_recommendations()
+                    print("✅ [Startup] Mood recommendations bootstrap completato.")
+                except Exception as e:
+                    print(f"❌ [Startup] Errore mood bootstrap: {e}")
+            
+            t_mood = threading.Thread(target=bootstrap_mood)
+            t_mood.start()
+        else:
+            print(f"✅ [Startup] Mood recommendations già presenti (generated_at: {mood_doc.get('generated_at', 'N/A')})")
+            
+    except Exception as e:
+        print(f"⚠️ [Startup] Errore check mood_movies: {e}")
 
 # ============================================
 # HELPER FUNCTIONS  
@@ -520,6 +561,105 @@ async def submit_quiz(submission: QuizSubmission, current_user_id: str = Depends
     )
 
     return {"message": "Quiz registrato", "stats": {"correct": quiz_correct, "wrong": quiz_wrong}, "updated": True}
+
+# ============================================
+# MOOD RECOMMENDATIONS ENDPOINT
+# ============================================
+@app.get("/mood-recommendations")
+async def get_mood_recommendations():
+    """
+    Restituisce le raccomandazioni giornaliere per mood arricchite con dati dal catalogo.
+    Ottimizzato per evitare N+1 query problem usando bulk fetch.
+    
+    Returns:
+        dict: Documento mood_movies con tutti i mood e i film associati arricchiti
+    """
+    try:
+        # Query 1: Recupera il documento mood_movies
+        mood_doc = db["mood_movies"].find_one(
+            {"_id": "daily_mood_recommendations"},
+            {"_id": 0}  # Escludi _id dalla risposta
+        )
+        
+        if not mood_doc:
+            # Collezione vuota - potrebbe essere prima esecuzione
+            return {
+                "status": "empty",
+                "message": "Mood recommendations not yet generated. Please try again in a few moments.",
+                "data": {}
+            }
+        
+        # Raccogli tutti gli imdb_id da tutti i mood (per bulk query)
+        all_imdb_ids = set()
+        mood_keys = ["felice", "malinconico", "eccitato", "rilassato", "romantico", "thriller"]
+        
+        for mood_key in mood_keys:
+            mood_films = mood_doc.get(mood_key, [])
+            for film in mood_films:
+                imdb_id = film.get("imdb_id")
+                if imdb_id:
+                    all_imdb_ids.add(imdb_id)
+        
+        # Query 2: Recupera tutti i film dal catalogo in una singola query
+        catalog_films = movies_catalog.find(
+            {"imdb_id": {"$in": list(all_imdb_ids)}},
+            {
+                "imdb_id": 1,
+                "poster_url": 1,
+                "year": 1,
+                "genres": 1,
+                "avg_vote": 1,
+                "director": 1,
+                "_id": 0
+            }
+        )
+        
+        # Costruisci mappa in memoria: {imdb_id → film_data}
+        catalog_map = {film["imdb_id"]: film for film in catalog_films}
+        
+        # Arricchisci i dati usando la mappa (no ulteriori query DB)
+        enriched_data = {}
+        
+        for mood_key in mood_keys:
+            mood_films = mood_doc.get(mood_key, [])
+            enriched_films = []
+            
+            for film in mood_films:
+                imdb_id = film.get("imdb_id")
+                if not imdb_id:
+                    continue
+                
+                # Lookup dalla mappa in memoria (O(1))
+                catalog_film = catalog_map.get(imdb_id)
+                
+                enriched_film = {
+                    "imdb_id": imdb_id,
+                    "title": film.get("title"),
+                    "poster_url": catalog_film.get("poster_url", STOCK_POSTER_URL) if catalog_film else STOCK_POSTER_URL,
+                    "year": catalog_film.get("year", 2024) if catalog_film else 2024,
+                    "genres": catalog_film.get("genres", []) if catalog_film else [],
+                    "avg_vote": catalog_film.get("avg_vote", 0) if catalog_film else 0,
+                    "director": catalog_film.get("director", "") if catalog_film else ""
+                }
+                
+                enriched_films.append(enriched_film)
+            
+            enriched_data[mood_key] = enriched_films
+        
+        # Restituisci i dati arricchiti
+        return {
+            "status": "success",
+            "generated_at": mood_doc.get("generated_at"),
+            "data": enriched_data
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "data": {}
+        }
+
+
 
 @app.post("/login")
 async def login(user: UserAuth):
