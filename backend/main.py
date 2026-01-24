@@ -24,6 +24,11 @@ from auth import get_password_hash, verify_password, create_access_token, get_cu
 from quiz_generator import get_daily_questions, run_daily_quiz_generation
 from cinema_pipeline import run_full_pipeline
 from kafka_producer import get_kafka_producer
+from YoutubeComments import get_upcoming_movie_with_trailer
+from YoutubeComments2 import get_latest_comment_for_trailer
+from YoutubeComments3 import get_trailer_comments
+from YoutubeComments5 import get_live_comments_for_trailer, get_live_comment_at, start_live_comments_streaming, stop_live_comments_streaming
+from YoutubeComments7 import get_sentiment_averages
 
 # ============================================
 # APP CONFIGURATION
@@ -603,6 +608,162 @@ async def get_preset_avatars():
         {"id": 9, "name": "Ana de Armas", "url": "https://pbs.twimg.com/media/Ec2RTm5XgAISWIh.jpg"},
         {"id": 10, "name": "Cat Woman", "url": "https://hips.hearstapps.com/hmg-prod/images/catwoman-storia-1647942111.jpeg?crop=1.00xw:0.663xh;0,0.0417xh&resize=640:*"}
     ]
+
+# ============================================
+# YOUTUBE COMMENTS ENDPOINTS
+# ============================================
+@app.get("/upcoming-movie-trailer")
+async def get_upcoming_trailer():
+    """Ottiene il primo film in uscita il mese prossimo con il suo trailer YouTube."""
+    try:
+        movie_data = get_upcoming_movie_with_trailer()
+        if movie_data:
+            return {
+                "status": "success",
+                "data": movie_data
+            }
+        else:
+            return {
+                "status": "not_found",
+                "message": "Nessun film trovato per il mese prossimo"
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.get("/latest-trailer-comment")
+async def get_latest_trailer_comment():
+    """Ottiene l'ultimo commento valido dal trailer del film in uscita."""
+    try:
+        # Prima ottieni i dati del film per avere l'URL del trailer
+        movie_data = get_upcoming_movie_with_trailer()
+        if not movie_data or not movie_data.get("trailer_url"):
+            return {
+                "status": "not_found",
+                "message": "Nessun trailer disponibile"
+            }
+        
+        # Ottieni l'ultimo commento dal trailer
+        comment_data = get_latest_comment_for_trailer(movie_data["trailer_url"])
+        
+        if comment_data:
+            return {
+                "status": "success",
+                "data": comment_data
+            }
+        else:
+            return {
+                "status": "not_found",
+                "message": "Nessun commento trovato per questo trailer"
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.get("/trailer-comments")
+async def get_trailer_comments_endpoint(max_comments: int = 5):
+    """Ottiene multipli commenti validi dal trailer del film in uscita."""
+    try:
+        # Prima ottieni i dati del film per avere l'URL del trailer
+        movie_data = get_upcoming_movie_with_trailer()
+        if not movie_data or not movie_data.get("trailer_url"):
+            return {
+                "status": "not_found",
+                "message": "Nessun trailer disponibile"
+            }
+        
+        # Ottieni i commenti dal trailer
+        comments = get_trailer_comments(movie_data["trailer_url"], max_comments=max_comments)
+        
+        return {
+            "status": "success",
+            "data": comments,
+            "count": len(comments)
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.get("/live-trailer-comments")
+async def get_live_trailer_comments_endpoint():
+    """Ottiene gli ultimi 5 commenti live dal trailer usando Spark Structured Streaming."""
+    try:
+        # Prima ottieni i dati del film per avere l'URL del trailer
+        movie_data = get_upcoming_movie_with_trailer()
+        if not movie_data or not movie_data.get("trailer_url"):
+            return {
+                "status": "not_found",
+                "message": "Nessun trailer disponibile"
+            }
+        
+        # Ottieni i commenti live dal buffer streaming
+        result = get_live_comments_for_trailer(movie_data["trailer_url"])
+        
+        return {
+            "status": result["status"],
+            "data": result["comments"],
+            "count": result["count"],
+            "streaming_active": result["streaming_active"]
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.get("/live-trailer-comment/{index}")
+async def get_live_trailer_comment_at_index(index: int):
+    """Ottiene un singolo commento live all'indice specificato (0-4)."""
+    try:
+        # Valida l'indice
+        if index < 0 or index > 4:
+            return {
+                "status": "error",
+                "message": "Indice deve essere tra 0 e 4"
+            }
+        
+        # Prima assicurati che lo streaming sia attivo
+        movie_data = get_upcoming_movie_with_trailer()
+        if movie_data and movie_data.get("trailer_url"):
+            start_live_comments_streaming(movie_data["trailer_url"])
+        
+        # Ottieni il commento all'indice
+        comment = get_live_comment_at(index)
+        
+        if comment:
+            return {
+                "status": "success",
+                "data": comment,
+                "index": index
+            }
+        else:
+            return {
+                "status": "not_found",
+                "message": f"Nessun commento all'indice {index}"
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.get("/sentiment-averages")
+async def get_sentiment_averages_endpoint():
+    """Ottiene le medie del sentiment per le collezioni CommentiLive e CommentiVotati."""
+    try:
+        result = get_sentiment_averages()
+        return result
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 # ============================================
 # CINEMA ENDPOINTS

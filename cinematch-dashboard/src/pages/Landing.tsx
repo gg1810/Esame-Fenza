@@ -137,7 +137,7 @@ export function Landing() {
                     </div>
                     <div className="feature">
                         <span className="feature-icon">💬</span>
-                        <span className="feature-text">Sentiment Reddit</span>
+                        <span className="feature-text">Commenti YouTube</span>
                     </div>
                     <div className="feature">
                         <span className="feature-icon">😊</span>

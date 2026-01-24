@@ -7,7 +7,7 @@ const menuItems = [
     { path: '/catalogo', icon: '🎬', label: 'Catalogo Film', theme: 'fox' },
     { path: '/recommendations', icon: '✨', label: 'Raccomandazioni', theme: 'a24' },
     { path: '/cinema', icon: '🎭', label: 'Cinema', theme: 'warner' },
-    { path: '/sentiment', icon: '💬', label: 'Sentiment', theme: 'paramount' },
+    { path: '/sentiment', icon: '💬', label: 'Commenti Youtube', theme: 'paramount' },
     { path: '/mood', icon: '😊', label: 'Mood', theme: 'lionsgate' },
     { path: '/predictions', icon: '📈', label: 'Previsioni', theme: 'universal' },
     { path: '/quiz', icon: '🌿', label: 'Quiz Ghibli', theme: 'ghibli' },
