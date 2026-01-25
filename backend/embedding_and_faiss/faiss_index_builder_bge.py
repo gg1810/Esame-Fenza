@@ -77,8 +77,6 @@ def main():
     embeddings_matrix = np.array(embeddings, dtype=np.float32)
     print(f"    Matrice: {embeddings_matrix.shape}")
     
-    faiss.normalize_L2(embeddings_matrix)
-    
     print("\n[3] Costruzione indice FAISS...")
     
     dimension = embeddings_matrix.shape[1]
