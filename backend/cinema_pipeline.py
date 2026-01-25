@@ -20,8 +20,6 @@ Questo file combina due processi DISTINTI:
 │  - Dati: poster, descrizione, cast, generi, rating                        │
 └────────────────────────────────────────────────────────────────────────────┘
 
-Autore: CineMatch / Esame Fenza
-Data: 2026
 """
 
 import requests

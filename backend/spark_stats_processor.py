@@ -94,7 +94,7 @@ def create_spark_session():
 
 def process_partition_incremental(iterator):
     """
-    🚀 ANTIGRAVITY V6: Struttura PIATTA con user_affinities.
+    V6: Struttura PIATTA con user_affinities.
     
     Ottimizzazioni rispetto a V5:
     1. Directors, Actors, Genres → scritti in collezione separata user_affinities
@@ -581,7 +581,7 @@ def bootstrap_global_stats():
     from pymongo import MongoClient
     from datetime import timedelta
     
-    logger.info("🚀 [Bootstrap] Inizializzazione global_stats da dati storici MongoDB...")
+    logger.info("[Bootstrap] Inizializzazione global_stats da dati storici MongoDB...")
     
     client = MongoClient(MONGODB_URL)
     db = client.cinematch_db
@@ -601,7 +601,7 @@ def bootstrap_global_stats():
         }))
         
         if not all_recent_movies:
-            logger.info("⚠️ [Bootstrap] Nessun film recente trovato, global_stats vuoto")
+            logger.info("[Bootstrap] Nessun film recente trovato, global_stats vuoto")
             db.global_stats.update_one(
                 {"type": "global_trends"},
                 {"$set": {
@@ -772,10 +772,10 @@ def write_global_trends_to_mongo(batch_df, batch_id):
                     if d.get('normalized_title'): catalog_map[d.get('normalized_title')] = d
                     if d.get('normalized_original_title'): catalog_map[d.get('normalized_original_title')] = d
             except Exception as e:
-                logger.error(f"⚠️ [Streaming] Errore lookup catalogo: {e}")
+                logger.error(f"[Streaming] Errore lookup catalogo: {e}")
         
         # 3. Processa eventi - gestisce ADD e DELETE
-        logger.info(f"   📋 Processando {len(rows)} righe aggregate...")
+        logger.info(f"   Processando {len(rows)} righe aggregate...")
         for row in rows:
             # Accesso sicuro alle colonne della Row
             row_dict = row.asDict()
@@ -867,10 +867,10 @@ def write_global_trends_to_mongo(batch_df, batch_id):
             upsert=True
         )
         
-        logger.info(f"✅ [Streaming] Top {len(top_movies)} film aggiornati (batch {batch_id})")
+        logger.info(f"[Streaming] Top {len(top_movies)} film aggiornati (batch {batch_id})")
         
     except Exception as e:
-        logger.error(f"❌ [Streaming] Errore write_global_trends_to_mongo: {e}")
+        logger.error(f"[Streaming] Errore write_global_trends_to_mongo: {e}")
     finally:
         client.close()
 
@@ -885,7 +885,7 @@ def start_global_trends_stream(spark, parsed_stream):
         col, first
     )
     
-    logger.info("🚀 Avvio Structured Streaming per Global Trends...")
+    logger.info("Avvio Structured Streaming per Global Trends...")
     
     # 1. Prepara lo stream con event_type incluso
     events_with_ts = parsed_stream \

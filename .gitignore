@@ -1,10 +1,11 @@
-# Git
+# Git & IDE
 node_modules/
 dist/
 .env
 .env.local
 .vscode/
 *.log
+.DS_Store
 
 # Python
 __pycache__/
@@ -14,12 +15,11 @@ venv/
 .venv/
 .pytest_cache/
 
-# Docker/DB
-mongo_data/
-.DS_Store
+# Cartelle Dati Esportati (da non mettere su Git)
+mongo_dump/
+elasticsearch_data/
+grafana_data/
 
-# Faiss indexes
+# Dati Progetto
 backend/data/faiss_bge*
-
-# Review Data
 backend/review/
