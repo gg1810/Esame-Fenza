@@ -33,7 +33,7 @@ MAPPING_FILE = "/app/data/faiss_bge_mapping.pkl"
 
 # Recommendation params
 TOP_K_CANDIDATES = 500
-N_RECOMMENDATIONS = 66  # Total recommendations to generate (displayed 22 at a time)
+N_RECOMMENDATIONS = 66  # Total recommendations to generate
 PAGE_SIZE = 22          # Items per page for frontend pagination
 MAX_PAGES = 3           # 66 / 22 = 3 pages
 N_NOT_RECOMMENDED = 3
