@@ -151,14 +151,11 @@ Questo permette di associare ogni vettore al film corrispondente.
 
 #### Step 3: Preparazione Matrici
 
-Gli embedding vengono convertiti in una matrice NumPy e normalizzati:
+Gli embedding vengono convertiti in una matrice NumPy:
 
 ```python
 embeddings_matrix = np.array(embeddings, dtype=np.float32)
-faiss.normalize_L2(embeddings_matrix)
 ```
-
-La normalizzazione L2 è fondamentale per utilizzare il prodotto scalare come metrica di similarità coseno.
 
 #### Step 4: Costruzione Indice
 
@@ -261,7 +258,6 @@ Il vettore descrizione dell'utente viene utilizzato per una ricerca FAISS:
 
 ```python
 user_desc_query = user_vectors["description"].reshape(1, -1)
-faiss.normalize_L2(user_desc_query)
 
 distances, indices = self.index.search(
     user_desc_query, 
