@@ -226,12 +226,12 @@ Le statistiche globali (Top Film, Trending Genres) richiedono un approccio diver
 
 ```mermaid
 flowchart TB
-    subgraph Bootstrap [🚀 Fase Bootstrap - All'Avvio]
+    subgraph Bootstrap [Fase Bootstrap - All'Avvio]
         A1[(MongoDB<br/>users.watched_movies)] -->|Aggregation Pipeline| B1[Conta tutti i film<br/>per tutti gli utenti]
         B1 -->|Inizializza| C1[movie_counts<br/>genre_counts<br/>in-memory]
     end
     
-    subgraph Streaming [🔄 Fase Streaming - Runtime]
+    subgraph Streaming [Fase Streaming - Runtime]
         D1[Kafka Events<br/>ADD/DELETE] -->|readStream| E1[Spark Streaming]
         E1 -->|Evento ADD| F1["+1 al contatore"]
         E1 -->|Evento DELETE| G1["-1 al contatore"]
@@ -239,14 +239,14 @@ flowchart TB
         G1 --> H1
     end
     
-    subgraph Persistence [💾 Persistenza]
+    subgraph Persistence [Persistenza]
         H1 -->|sort descending| I1[Top 10 Movies]
         H1 -->|group by genre| J1[Trending Genres %]
         I1 --> K1[(global_stats<br/>Collection)]
         J1 --> K1
     end
     
-    subgraph Dashboard [📊 Visualizzazione]
+    subgraph Dashboard [Visualizzazione]
         K1 --> L1[Admin Dashboard<br/>Trend Globali]
     end
     

@@ -146,3 +146,65 @@ def save_to_mongodb(data: List[Dict]):
 ```
 
 Questa metodologia garantisce che il database rimanga performante e che lo spazio di archiviazione sia utilizzato in modo efficiente, mantenendo solo lo storico recente necessario per eventuali analisi o funzionalità di "rewind" limitato.
+
+---
+
+### Struttura Gerarchica Dati
+
+La collezione `showtimes` utilizza un documento nidificato che riflette la gerarchia naturale:
+
+```mermaid
+flowchart TD
+    subgraph Document [Documento Film]
+        A[film_id: '12345'<br/>film_title: 'Oppenheimer'<br/>director: 'Nolan']
+    end
+    
+    subgraph Regions [regions]
+        B1[napoli]
+        B2[salerno]
+        B3[caserta]
+    end
+    
+    subgraph Dates [dates]
+        C1[2024-01-24]
+        C2[2024-01-25]
+    end
+    
+    subgraph Cinemas [cinemas]
+        D1[The_Space_Cinema]
+        D2[Cinema_Metropolitan]
+    end
+    
+    subgraph Showtimes [showtimes array]
+        E1["{ sala: 'Sala 1',<br/>time: '18:30',<br/>price: '8,50€' }"]
+        E2["{ sala: 'Sala 3',<br/>time: '21:15',<br/>price: '9,50€' }"]
+    end
+    
+    A --> B1
+    A --> B2
+    A --> B3
+    B1 --> C1
+    B1 --> C2
+    C1 --> D1
+    C1 --> D2
+    D1 --> E1
+    D1 --> E2
+```
+
+**Vantaggi della struttura**:
+- **Query O(1)**: Accesso diretto via path `regions.napoli.dates.2024-01-24.cinemas`
+- **Update Atomici**: `$set` su path specifico senza toccare il resto del documento
+- **Cleanup Efficiente**: `$unset` su date obsolete senza riscrivere tutto
+
+---
+
+### Tabella Riepilogativa Campi
+
+| Campo | Tipo | Descrizione |
+|:------|:-----|:------------|
+| `film_id` | string | ID univoco ComingSoon |
+| `film_title` | string | Titolo italiano |
+| `film_original_title` | string | Titolo originale |
+| `director` | string | Nome regista |
+| `last_updated` | ISO 8601 | Timestamp ultimo aggiornamento |
+| `regions.<slug>.dates.<data>.cinemas.<key>.showtimes` | array | Lista orari con sala/prezzo |

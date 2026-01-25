@@ -48,3 +48,32 @@ Questa sezione offre metriche operative sulla base utenti e sullo stato del sist
 Grafana non si collega direttamente a Spark, ma legge i risultati "cristallizzati" che Spark scrive su MongoDB. L'architettura utilizza il plugin **Infinity Datasource** (per chiamate API JSON al backend) o un connettore MongoDB nativo.
 
 *   **Vantaggio**: Disaccoppiamento totale. Se Spark è sotto carico pesante per il processing, la dashboard Grafana continua a leggere velocemente l'ultimo stato valido dal database, senza rallentamenti.
+
+---
+
+### Configurazione Datasource Infinity
+
+Per connettere Grafana al backend FastAPI:
+
+```yaml
+# grafana/provisioning/datasources/infinity.yaml
+apiVersion: 1
+datasources:
+  - name: CineMatch-API
+    type: yesoreyeram-infinity-datasource
+    access: proxy
+    url: http://backend:8000
+    jsonData:
+      allowedHosts:
+        - backend:8000
+```
+
+**Query di esempio per Top Movies**:
+```json
+{
+  "type": "json",
+  "url": "/admin/global-stats",
+  "parser": "backend",
+  "root_selector": "top_movies"
+}
+```

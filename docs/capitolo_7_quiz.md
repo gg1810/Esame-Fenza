@@ -110,3 +110,62 @@ def validate_question(q: Dict) -> Tuple[bool, str]:
         
     return True, "OK"
 ```
+
+---
+
+## 7.6 Diagrammi di Flusso
+
+### Pipeline di Generazione Quiz (Notturna)
+
+```mermaid
+flowchart TB
+    subgraph Scheduler [Scheduler h 03:00]
+        A[Trigger Giornaliero]
+    end
+    
+    subgraph Selection [Selezione Film]
+        B[(movies_catalog)]
+        C[Random Sample<br/>10 film]
+        D[Escludi Usati<br/>Ultima Settimana]
+        E[Filtra con<br/>description valida]
+    end
+    
+    subgraph Generation [Generazione AI]
+        F[Per ogni Film]
+        G[Costruisci Prompt<br/>Titolo + Anno + Trama]
+        H[Ollama API<br/>Qwen 2.5 7B]
+        I[Parse JSON<br/>Response]
+    end
+    
+    subgraph Validation [Validazione]
+        J{validate_question}
+        K[Anti-Allucinazione<br/>Bad Phrases Check]
+        L[Lunghezza Min/Max]
+        M[Risposte Uniche?]
+        N[Retry fino a 5x]
+    end
+    
+    subgraph Persistence [Salvataggio]
+        O[(quiz_questions)]
+        P[5 domande/giorno]
+    end
+    
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    G --> H
+    H --> I
+    I --> J
+    J -->|FAIL| N
+    N --> G
+    J -->|PASS| K
+    K --> L
+    L --> M
+    M --> O
+    O --> P
+```
+
+
