@@ -219,12 +219,8 @@ def update_faiss_index(new_embeddings: np.ndarray, new_ids: List[dict]):
     
     print("\n[7/7] Aggiunta nuovi vettori...")
     
-    # Normalize new embeddings
-    new_embeddings_normalized = new_embeddings.copy()
-    faiss.normalize_L2(new_embeddings_normalized)
-    
     # Add to index
-    index.add(new_embeddings_normalized)
+    index.add(new_embeddings)
     
     # Update mapping
     id_mapping.extend(new_ids)
